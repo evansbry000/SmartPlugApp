@@ -1,0 +1,34 @@
+# Flutter specific files
+build/
+.pub/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.flutter-versions
+
+# Dart specific files
+.dart_tool/
+.dockerignore
+
+# Firebase & Android Studio
+android/.gradle/
+android/.idea/
+android/local.properties
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Generated.xcconfig
+ios/.dart_tool/
+
+# VS Code & IntelliJ settings
+.vscode/
+.idea/
+
+# Node.js & Firebase functions (if using Firebase)
+functions/node_modules/
+functions/.firebase/
+functions/lib/
+functions/tsconfig.tsbuildinfo
+
+# Other system files
+.DS_Store
+Thumbs.db

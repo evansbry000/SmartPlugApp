@@ -1,0 +1,11 @@
+# ESP32 Smart Plug Requirements
+# These libraries need to be installed in the Arduino IDE Library Manager
+
+# Firebase ESP Client
+https://github.com/mobizt/Firebase_ESP_Client
+
+# ArduinoJson
+https://github.com/bblanchon/ArduinoJson
+
+# WiFi (built-in with ESP32 board support)
+# No additional installation needed 
