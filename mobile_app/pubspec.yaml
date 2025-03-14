@@ -1,0 +1,36 @@
+name: smart_plug_app
+description: A smart plug monitoring and control application.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: 2.15.1
+  firebase_core_web: 2.7.0
+  firebase_core_platform_interface: 4.8.0
+  firebase_auth: 4.9.0
+  firebase_auth_web: 5.8.0
+  cloud_firestore: 4.9.1
+  cloud_firestore_web: 3.7.0
+  cloud_firestore_platform_interface: 5.16.0
+  provider: ^6.1.1
+  fl_chart: ^0.65.0
+  intl: ^0.19.0
+  shared_preferences: ^2.2.2
+  js: ^0.6.7
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/icons/ 

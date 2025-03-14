@@ -1,34 +1,32 @@
-# Flutter specific files
-build/
-.pub/
-.packages
-.flutter-plugins
-.flutter-plugins-dependencies
-.flutter-versions
+# Flutter/Dart specific
+**/build/
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/pubspec.lock
 
-# Dart specific files
-.dart_tool/
-.dockerignore
+# Firebase
+**/.firebase/
+**/firebase-debug.log
 
-# Firebase & Android Studio
-android/.gradle/
-android/.idea/
-android/local.properties
-ios/Pods/
-ios/.symlinks/
-ios/Flutter/Generated.xcconfig
-ios/.dart_tool/
+# IDE specific
+**/.idea/
+**/.vscode/
+**/*.iml
 
-# VS Code & IntelliJ settings
-.vscode/
-.idea/
+# Web related
+**/node_modules/
+**/.pnp
+**/.pnp.js
 
-# Node.js & Firebase functions (if using Firebase)
-functions/node_modules/
-functions/.firebase/
-functions/lib/
-functions/tsconfig.tsbuildinfo
+# Testing
+**/coverage/
 
-# Other system files
-.DS_Store
-Thumbs.db
+# Misc
+**/.DS_Store
+**/*.pem
+**/.env.local
+**/.env.development.local
+**/.env.test.local
+**/.env.production.local
