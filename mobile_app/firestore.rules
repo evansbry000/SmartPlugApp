@@ -14,21 +14,28 @@ service cloud.firestore {
 
     // Smart plug data collection
     match /smart_plugs/{plugId} {
-      // Allow read if user is authenticated
-      allow read: if isAuthenticated();
+      // Allow read if user is authenticated and owns the plug
+      allow read: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
       
-      // Allow write if user is authenticated (we can make this more restrictive later)
-      allow write: if isAuthenticated();
+      // Allow write if user is authenticated and owns the plug
+      allow write: if isAuthenticated() && resource.data.ownerId == request.auth.uid;
 
       // Commands subcollection
       match /commands/{commandId} {
-        allow read, write: if isAuthenticated();
+        allow read: if isAuthenticated() && get(/databases/$(database)/documents/smart_plugs/$(plugId)).data.ownerId == request.auth.uid;
+        allow write: if isAuthenticated() && get(/databases/$(database)/documents/smart_plugs/$(plugId)).data.ownerId == request.auth.uid;
       }
 
-      // History subcollection
+      // Events subcollection (for warnings, emergencies, etc.)
+      match /events/{eventId} {
+        allow read: if isAuthenticated() && get(/databases/$(database)/documents/smart_plugs/$(plugId)).data.ownerId == request.auth.uid;
+        allow write: if isAuthenticated() && get(/databases/$(database)/documents/smart_plugs/$(plugId)).data.ownerId == request.auth.uid;
+      }
+
+      // History subcollection (for historical data)
       match /history/{historyId} {
-        allow read: if isAuthenticated();
-        allow write: if isAuthenticated();
+        allow read: if isAuthenticated() && get(/databases/$(database)/documents/smart_plugs/$(plugId)).data.ownerId == request.auth.uid;
+        allow write: if isAuthenticated() && get(/databases/$(database)/documents/smart_plugs/$(plugId)).data.ownerId == request.auth.uid;
       }
     }
 
@@ -39,6 +46,11 @@ service cloud.firestore {
       
       // User's device settings subcollection
       match /devices/{deviceId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      // User's notification preferences
+      match /notifications/{notificationId} {
         allow read, write: if isOwner(userId);
       }
     }

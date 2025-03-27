@@ -24,10 +24,18 @@ const int ARDUINO_RX = 16;  // ESP32 RX pin
 const int ARDUINO_TX = 17;  // ESP32 TX pin
 
 // Variables for sensor data
-float voltage = 0.0;
 float current = 0.0;
 float power = 0.0;
+float temperature = 0.0;
 bool relayState = false;
+int deviceState = 0;  // 0: OFF, 1: IDLE, 2: RUNNING
+
+// Connection handling
+unsigned long lastDataTime = 0;
+const unsigned long CONNECTION_TIMEOUT = 180000; // 3 minutes
+const unsigned long RECONNECT_INTERVAL = 30000;  // 30 seconds
+int reconnectAttempts = 0;
+const int MAX_RECONNECT_ATTEMPTS = 5;
 
 void setup() {
   // Initialize Serial for debugging
@@ -60,10 +68,18 @@ void setup() {
 }
 
 void loop() {
+  unsigned long currentTime = millis();
+  
   // Read data from Arduino
   if (Serial2.available()) {
     String data = Serial2.readStringUntil('\n');
     parseArduinoData(data);
+    lastDataTime = currentTime;
+  }
+  
+  // Check connection status
+  if (currentTime - lastDataTime > CONNECTION_TIMEOUT) {
+    handleConnectionLost();
   }
   
   // Update Firebase
@@ -76,29 +92,115 @@ void loop() {
 }
 
 void parseArduinoData(String data) {
-  // Parse the data string in format: "V:voltage,C:current,P:power,R:relayState"
-  int vStart = data.indexOf("V:") + 2;
-  int vEnd = data.indexOf(",C:");
+  // Parse the data string in format: "C:current,P:power,T:temperature,R:relayState,S:deviceState"
   int cStart = data.indexOf("C:") + 2;
   int cEnd = data.indexOf(",P:");
   int pStart = data.indexOf("P:") + 2;
-  int pEnd = data.indexOf(",R:");
+  int pEnd = data.indexOf(",T:");
+  int tStart = data.indexOf("T:") + 2;
+  int tEnd = data.indexOf(",R:");
   int rStart = data.indexOf("R:") + 2;
+  int rEnd = data.indexOf(",S:");
+  int sStart = data.indexOf("S:") + 2;
   
-  voltage = data.substring(vStart, vEnd).toFloat();
   current = data.substring(cStart, cEnd).toFloat();
   power = data.substring(pStart, pEnd).toFloat();
-  relayState = data.substring(rStart).toInt() == 1;
+  temperature = data.substring(tStart, tEnd).toFloat();
+  relayState = data.substring(rStart, rEnd).toInt() == 1;
+  deviceState = data.substring(sStart).toInt();
+  
+  // Check for emergency messages
+  if (data.startsWith("EMERGENCY:")) {
+    handleEmergency(data.substring(9));
+  } else if (data.startsWith("WARNING:")) {
+    handleWarning(data.substring(8));
+  }
+}
+
+void handleEmergency(String message) {
+  if (message == "TEMP_SHUTOFF") {
+    // Update Firebase with emergency status
+    if (Firebase.ready()) {
+      StaticJsonDocument<200> doc;
+      doc["type"] = "emergency";
+      doc["message"] = "Temperature exceeded shutoff threshold";
+      doc["temperature"] = temperature;
+      doc["timestamp"] = Firebase.Timestamp();
+      
+      String jsonString;
+      serializeJson(doc, jsonString);
+      
+      Firebase.Firestore.setDocument(&fbdo, "smart_plugs/plug1/events/latest", jsonString);
+    }
+  }
+}
+
+void handleWarning(String message) {
+  if (message == "HIGH_TEMP") {
+    // Update Firebase with warning status
+    if (Firebase.ready()) {
+      StaticJsonDocument<200> doc;
+      doc["type"] = "warning";
+      doc["message"] = "High temperature warning";
+      doc["temperature"] = temperature;
+      doc["timestamp"] = Firebase.Timestamp();
+      
+      String jsonString;
+      serializeJson(doc, jsonString);
+      
+      Firebase.Firestore.setDocument(&fbdo, "smart_plugs/plug1/events/latest", jsonString);
+    }
+  }
+}
+
+void handleConnectionLost() {
+  if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+    reconnectAttempts++;
+    Serial.println("Connection lost. Attempting to reconnect...");
+    
+    // Send connection lost event to Firebase
+    if (Firebase.ready()) {
+      StaticJsonDocument<200> doc;
+      doc["type"] = "connection";
+      doc["status"] = "lost";
+      doc["attempt"] = reconnectAttempts;
+      doc["timestamp"] = Firebase.Timestamp();
+      
+      String jsonString;
+      serializeJson(doc, jsonString);
+      
+      Firebase.Firestore.setDocument(&fbdo, "smart_plugs/plug1/events/latest", jsonString);
+    }
+    
+    // Attempt to reconnect
+    Serial2.begin(9600, SERIAL_8N1, ARDUINO_RX, ARDUINO_TX);
+    delay(RECONNECT_INTERVAL);
+  } else {
+    Serial.println("Max reconnection attempts reached. Manual intervention required.");
+    // Send final connection lost event
+    if (Firebase.ready()) {
+      StaticJsonDocument<200> doc;
+      doc["type"] = "connection";
+      doc["status"] = "failed";
+      doc["timestamp"] = Firebase.Timestamp();
+      
+      String jsonString;
+      serializeJson(doc, jsonString);
+      
+      Firebase.Firestore.setDocument(&fbdo, "smart_plugs/plug1/events/latest", jsonString);
+    }
+  }
 }
 
 void updateFirebase() {
   if (Firebase.ready()) {
     // Create JSON document
     StaticJsonDocument<200> doc;
-    doc["voltage"] = voltage;
     doc["current"] = current;
     doc["power"] = power;
+    doc["temperature"] = temperature;
     doc["relayState"] = relayState;
+    doc["deviceState"] = deviceState;
     doc["timestamp"] = Firebase.Timestamp();
     
     String jsonString;

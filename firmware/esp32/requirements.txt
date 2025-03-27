@@ -8,4 +8,10 @@ https://github.com/mobizt/Firebase_ESP_Client
 https://github.com/bblanchon/ArduinoJson
 
 # WiFi (built-in with ESP32 board support)
-# No additional installation needed 
+# No additional installation needed
+
+# Additional Notes:
+# 1. Make sure to install the ESP32 board support in Arduino IDE
+# 2. Select the correct board (e.g., ESP32 Dev Module)
+# 3. Set the correct upload speed (921600 recommended)
+# 4. Set the correct partition scheme (Huge APP with OTA) 
