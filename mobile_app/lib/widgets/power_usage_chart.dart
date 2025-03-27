@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:fl_chart/fl_chart.dart';
 import '../services/smart_plug_service.dart';
 
 class PowerUsageChart extends StatefulWidget {
@@ -78,38 +77,10 @@ class _PowerUsageChartState extends State<PowerUsageChart> {
             else
               SizedBox(
                 height: 200,
-                child: LineChart(
-                  LineChartData(
-                    gridData: const FlGridData(show: true),
-                    titlesData: FlTitlesData(
-                      leftTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: true),
-                      ),
-                      bottomTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: true),
-                      ),
-                      rightTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: false),
-                      ),
-                      topTitles: const AxisTitles(
-                        sideTitles: SideTitles(showTitles: false),
-                      ),
-                    ),
-                    borderData: FlBorderData(show: true),
-                    lineBarsData: [
-                      LineChartBarData(
-                        spots: _historicalData.asMap().entries.map((entry) {
-                          return FlSpot(
-                            entry.key.toDouble(),
-                            entry.value.power,
-                          );
-                        }).toList(),
-                        isCurved: true,
-                        color: Colors.blue,
-                        barWidth: 3,
-                        dotData: const FlDotData(show: false),
-                      ),
-                    ],
+                child: Center(
+                  child: Text(
+                    'Power usage data: ${_historicalData.length} points available',
+                    style: const TextStyle(fontSize: 16),
                   ),
                 ),
               ),
