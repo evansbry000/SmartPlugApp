@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService with ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -9,40 +9,30 @@ class AuthService with ChangeNotifier {
   User? _user;
   bool _isLoading = false;
   String? _errorMessage;
-  SharedPreferences? _prefs;
 
   User? get user => _user;
   bool get isLoading => _isLoading;
   bool get isAuthenticated => _user != null;
   String? get errorMessage => _errorMessage;
 
-  AuthService() {
-    _initPrefs();
-    _auth.authStateChanges().listen((User? user) {
-      _user = user;
-      if (user == null) {
-        clearError(); // Clear error when user logs out
-      }
-      notifyListeners();
-    });
-  }
-
-  Future<void> _initPrefs() async {
-    _prefs = await SharedPreferences.getInstance();
-    _errorMessage = _prefs?.getString('auth_error');
-    notifyListeners();
-  }
-
   void clearError() {
     _errorMessage = null;
-    _prefs?.remove('auth_error');
     notifyListeners();
   }
 
   void setError(String message) {
     _errorMessage = message;
-    _prefs?.setString('auth_error', message);
     notifyListeners();
+  }
+
+  AuthService() {
+    _auth.authStateChanges().listen((User? user) {
+      _user = user;
+      if (user == null) {
+        _errorMessage = null; // Clear error when user logs out
+      }
+      notifyListeners();
+    });
   }
 
   Future<void> _initializeUserData(String userId) async {
