@@ -1,0 +1,113 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+
+// WiFi Credentials
+const char* ssid = "your_SSID";
+const char* password = "your_PASSWORD";
+
+// Create an ESP8266 WebServer object
+ESP8266WebServer server(80);
+
+// Define the serial interface for communication with Arduino
+HardwareSerial& mySerial = Serial; // You can use Serial1, Serial2 for other pins
+
+// Global variables to hold data from Arduino
+float current = 0.0;
+float power = 0.0;
+float temperature = 0.0;
+bool relayState = false;
+String deviceState = "OFF";
+
+// Function to handle the web page and display sensor data
+void handleRoot() {
+  String html = "<html><body>";
+  html += "<h1>Smart Plug Status</h1>";
+  html += "<p>Current: " + String(current) + " A</p>";
+  html += "<p>Power: " + String(power) + " W</p>";
+  html += "<p>Temperature: " + String(temperature) + " °C</p>";
+  html += "<p>Relay State: " + (relayState ? "ON" : "OFF") + "</p>";
+  html += "<p>Device State: " + deviceState + "</p>";
+  html += "<form action=\"/toggle_relay\" method=\"POST\">";
+  html += "<button type=\"submit\">Toggle Relay</button>";
+  html += "</form>";
+  html += "</body></html>";
+  server.send(200, "text/html", html);
+}
+
+// Function to toggle the relay on/off
+void handleToggleRelay() {
+  // Send command to Arduino via serial
+  if (relayState) {
+    mySerial.println("RELAY:0");  // Turn off relay
+  } else {
+    mySerial.println("RELAY:1");  // Turn on relay
+  }
+  
+  relayState = !relayState;  // Update relay state locally
+  
+  // Redirect to the main page to reflect changes
+  server.sendHeader("Location", "/");
+  server.send(303, "text/plain", "");
+}
+
+void setup() {
+  // Start Serial communication
+  Serial.begin(9600);
+  
+  // Start Wi-Fi connection
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+  
+  // Wait for the Wi-Fi to connect
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting...");
+  }
+  
+  Serial.println("WiFi connected!");
+
+  // Initialize the serial connection to communicate with Arduino
+  mySerial.begin(9600);  // Baud rate matching the Arduino
+  
+  // Setup web server routes
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/toggle_relay", HTTP_POST, handleToggleRelay);
+  
+  // Start the web server
+  server.begin();
+  Serial.println("HTTP Server started");
+
+  // Optionally, print the IP address
+  Serial.print("Server is at http://");
+  Serial.println(WiFi.localIP());
+}
+
+void loop() {
+  // Handle client requests
+  server.handleClient();
+  
+  // Read data from Arduino via Serial
+  if (mySerial.available()) {
+    String data = mySerial.readStringUntil('\n');
+    // Parse data sent from Arduino
+    if (data.startsWith("C:")) {
+      current = data.substring(2, data.indexOf(",")).toFloat();
+      data = data.substring(data.indexOf(",") + 1);
+    }
+    if (data.startsWith("P:")) {
+      power = data.substring(2, data.indexOf(",")).toFloat();
+      data = data.substring(data.indexOf(",") + 1);
+    }
+    if (data.startsWith("T:")) {
+      temperature = data.substring(2, data.indexOf(",")).toFloat();
+      data = data.substring(data.indexOf(",") + 1);
+    }
+    if (data.startsWith("R:")) {
+      relayState = data.substring(2, data.indexOf(",")).toInt() == 1;
+      data = data.substring(data.indexOf(",") + 1);
+    }
+    if (data.startsWith("S:")) {
+      deviceState = data.substring(2);
+    }
+  }
+}
