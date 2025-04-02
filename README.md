@@ -1,6 +1,6 @@
 # Smart Plug App
 
-A Flutter web application for monitoring and controlling smart plugs with real-time data visualization and temperature monitoring.
+A Flutter web application for monitoring and controlling smart plugs with real-time data visualization, temperature monitoring, and surge protection for high-powered appliances.
 
 ## Features
 
@@ -11,7 +11,8 @@ A Flutter web application for monitoring and controlling smart plugs with real-t
   - Temperature readings
   - Device state (off/idle/running)
   - Relay status
-- Temperature warning system
+- Temperature warning system with automatic shutoff
+- Integrated surge protection for high-powered appliances
 - Historical data visualization
 - Device control (toggle on/off)
 - User settings and preferences
@@ -29,17 +30,18 @@ SmartPlugApp/
 │   │   └── main.dart          # Application entry point
 │   ├── web/                   # Web-specific files
 │   └── pubspec.yaml           # Flutter dependencies
-├── firmware/                   # Arduino and ESP32 firmware
+├── firmware/                   # Arduino and ESP8266 firmware
 │   ├── arduino/               # Arduino code for sensor reading
-│   └── esp32/                 # ESP32 code for WiFi and Firebase
+│   └── esp8266/               # ESP8266 code for WiFi and Firebase
 └── firestore.rules            # Firebase security rules
 ```
 
 ## Hardware Requirements
 
-- ESP32 development board
+- ESP8266 NodeMCU development board
 - ACS712 current sensor (30A)
 - LM35 temperature sensor
+- MOV surge protection circuit
 - Relay module
 - Power supply
 - USB cable for programming
@@ -49,7 +51,7 @@ SmartPlugApp/
 - Flutter SDK
 - Firebase CLI
 - Arduino IDE
-- ESP32 board support for Arduino IDE
+- ESP8266 board support for Arduino IDE
 
 ## Setup Instructions
 
@@ -80,7 +82,8 @@ SmartPlugApp/
 5. Upload firmware:
    - Open Arduino IDE
    - Install required libraries
-   - Upload code to ESP32
+   - Upload Arduino code to Arduino board
+   - Upload ESP8266 code to ESP8266 board
 
 ## Firebase Configuration
 
@@ -89,6 +92,24 @@ The app uses Firebase for:
 - Real-time data storage
 - Device state management
 - User preferences
+
+## Hardware Configuration
+
+The system includes:
+- ESP8266 for WiFi connectivity and Firebase communication
+- Arduino for sensor reading and direct device control
+- ACS712 for current sensing (up to 30A)
+- LM35 for temperature monitoring
+- Metal Oxide Varistor (MOV) based surge protection circuit
+- Relay for device switching
+
+## Safety Features
+
+The smart plug includes several safety features for high-powered devices:
+- Temperature monitoring with automatic shutoff
+- Surge protection for voltage spikes
+- Current monitoring to detect abnormal operation
+- Remote control to turn off devices when not in use
 
 ## Security
 

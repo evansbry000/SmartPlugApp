@@ -1,0 +1,22 @@
+# ESP8266 Libraries
+# Install using Arduino Library Manager
+
+# ESP8266 Core
+# https://github.com/esp8266/Arduino
+# For ESP8266 WiFi and core functionality
+
+# ArduinoJson (ver. 6.x)
+# https://arduinojson.org/
+# For JSON parsing and creation
+
+# Firebase ESP8266 Client
+# https://github.com/mobizt/Firebase-ESP8266
+# For connecting to Firebase Realtime Database
+
+# SoftwareSerial
+# Built-in with ESP8266 Core
+# For serial communication with Arduino
+
+# Time
+# https://github.com/PaulStoffregen/Time
+# For time handling 

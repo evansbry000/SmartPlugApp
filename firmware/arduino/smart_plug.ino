@@ -3,8 +3,13 @@
 
 // Pin Definitions
 const int CURRENT_SENSOR_PIN = A0;  // ACS712 current sensor
-const int TEMP_SENSOR_PIN = A1;     // LM35 temperature sensor
-const int RELAY_PIN = 7;            // Relay control pin
+const int TEMP_SENSOR_PIN = A1;     // LM35 temperature sensor on analog pin A1
+const int RELAY_PIN = 7;            // Relay control pin D7
+const int ESP_RX_PIN = 10;          // D10 Arduino pin to ESP8266 TX
+const int ESP_TX_PIN = 11;          // D11 Arduino pin to ESP8266 RX
+
+// Relay configuration
+const bool USE_RELAY = false;       // Set to true if relay hardware is connected
 
 // Sensor Constants
 const int MV_PER_AMP = 66;          // 66 for 30A Module
@@ -36,18 +41,24 @@ enum DeviceState {
 };
 DeviceState currentState = OFF;
 
+#include <SoftwareSerial.h>
+SoftwareSerial espSerial(ESP_RX_PIN, ESP_TX_PIN); // RX, TX
+
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(9600);  // Serial monitor for debugging
+  espSerial.begin(9600); // Communication with ESP8266
   
   // Configure pins
-  pinMode(RELAY_PIN, OUTPUT);
+  if (USE_RELAY) {
+    pinMode(RELAY_PIN, OUTPUT);
+    digitalWrite(RELAY_PIN, LOW); // Initialize relay as OFF
+  }
+  
   pinMode(CURRENT_SENSOR_PIN, INPUT);
   pinMode(TEMP_SENSOR_PIN, INPUT);
   
-  // Initialize relay as OFF
-  digitalWrite(RELAY_PIN, LOW);
-  
   Serial.println("Smart Plug Initialized");
+  espSerial.println("Arduino Ready");
 }
 
 void loop() {
@@ -58,11 +69,11 @@ void loop() {
     readSensors();
     updateDeviceState();
     checkTemperature();
-    sendDataToESP32();
+    sendDataToESP8266();
     lastReadingTime = currentTime;
   }
   
-  // Process any incoming commands
+  // Process any incoming commands from ESP8266
   processCommand();
 }
 
@@ -75,9 +86,21 @@ void readSensors() {
   // Calculate power (using 120V AC)
   power = current * 120.0 / 1.3;  // 1.3 is empirical calibration factor
   
-  // Read temperature sensor
+  // Read temperature sensor from analog pin A1
   int tempRaw = analogRead(TEMP_SENSOR_PIN);
-  temperature = tempRaw * TEMP_SENSOR_RATIO;
+  // Convert analog reading to temperature (0-1023 maps to 0-5V)
+  // LM35 outputs 10mV per degree Celsius
+  float tempVoltage = tempRaw * (5.0 / 1023.0);
+  temperature = tempVoltage / 0.01; // 10mV per degree
+  
+  // Debug output
+  Serial.print("Current: ");
+  Serial.print(current);
+  Serial.print("A, Power: ");
+  Serial.print(power);
+  Serial.print("W, Temp: ");
+  Serial.print(temperature);
+  Serial.println("°C");
 }
 
 float getVPP() {
@@ -116,7 +139,7 @@ void updateDeviceState() {
   // Only update if state changed
   if (newState != currentState) {
     currentState = newState;
-    // State change will be reported in sendDataToESP32
+    // State change will be reported in sendDataToESP8266
   }
 }
 
@@ -125,35 +148,46 @@ void checkTemperature() {
     // Emergency shutoff
     setRelay(false);
     // Send emergency shutoff notification
-    Serial.println("EMERGENCY:TEMP_SHUTOFF");
+    espSerial.println("EMERGENCY:TEMP_SHUTOFF");
+    Serial.println("EMERGENCY: Temperature shutoff threshold reached!");
   } else if (temperature >= TEMP_WARNING) {
     // Send warning notification
-    Serial.println("WARNING:HIGH_TEMP");
+    espSerial.println("WARNING:HIGH_TEMP");
+    Serial.println("WARNING: High temperature detected!");
   }
 }
 
-void sendDataToESP32() {
+void sendDataToESP8266() {
   // Format: "C:current,P:power,T:temperature,R:relayState,S:deviceState"
-  Serial.print("C:");
-  Serial.print(current);
-  Serial.print(",P:");
-  Serial.print(power);
-  Serial.print(",T:");
-  Serial.print(temperature);
-  Serial.print(",R:");
-  Serial.print(relayState);
-  Serial.print(",S:");
-  Serial.println(currentState);
+  espSerial.print("C:");
+  espSerial.print(current);
+  espSerial.print(",P:");
+  espSerial.print(power);
+  espSerial.print(",T:");
+  espSerial.print(temperature);
+  espSerial.print(",R:");
+  espSerial.print(relayState);
+  espSerial.print(",S:");
+  espSerial.println(currentState);
 }
 
 void setRelay(bool state) {
   relayState = state;
-  digitalWrite(RELAY_PIN, state ? HIGH : LOW);
+  if (USE_RELAY) {
+    digitalWrite(RELAY_PIN, state ? HIGH : LOW);
+    Serial.print("Relay set to: ");
+    Serial.println(state ? "ON" : "OFF");
+  } else {
+    Serial.print("Relay simulation: ");
+    Serial.println(state ? "ON" : "OFF");
+  }
 }
 
 void processCommand() {
-  if (Serial.available()) {
-    String command = Serial.readStringUntil('\n');
+  if (espSerial.available()) {
+    String command = espSerial.readStringUntil('\n');
+    Serial.print("Command received: ");
+    Serial.println(command);
     
     if (command.startsWith("RELAY:")) {
       bool newState = command.substring(6).toInt() == 1;
