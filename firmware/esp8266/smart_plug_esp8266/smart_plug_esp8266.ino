@@ -34,58 +34,27 @@ const unsigned long CONNECTION_TIMEOUT = 180000; // 3 minutes
 const unsigned long RECONNECT_INTERVAL = 30000;  // 30 seconds
 int reconnectAttempts = 0;
 const int MAX_RECONNECT_ATTEMPTS = 5;
+uint8_t wifiRetries = 0;
+const uint8_t MAX_WIFI_RETRIES = 20;
+bool wifiConnected = false;
+
+// Device Info
+String deviceID = "plug1";
+String deviceName = "Smart Plug";
+String firmwareVersion = "1.1.0";
 
 void setup() {
   // Initialize Serial for debugging
   Serial.begin(115200);
+  delay(100);
   Serial.println("\n\nESP8266 Smart Plug starting...");
+  Serial.println("Firmware version: " + firmwareVersion);
   
   // Initialize SoftwareSerial for communication with Arduino
-  arduinoSerial.begin(9600);
+  arduinoSerial.begin(115200);
   
-  // Connect to WiFi
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  WiFi.mode(WIFI_STA);  // Set as station mode (not AP)
-  WiFi.setSleepMode(WIFI_NONE_SLEEP); // Disable WiFi sleep to improve stability
-  WiFi.setAutoReconnect(true);  // Enable auto-reconnect
-  
-  Serial.print("Connecting to WiFi");
-  
-  // Add timeout for WiFi connection
-  const int WIFI_TIMEOUT = 20000; // 20 seconds
-  unsigned long startAttemptTime = millis();
-    
-  while (WiFi.status() != WL_CONNECTED && 
-         millis() - startAttemptTime < WIFI_TIMEOUT) {
-    delay(500);
-    Serial.print(".");
-  }
-  
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("\nFailed to connect to WiFi. Restarting...");
-    ESP.restart();
-  }
-  
-  Serial.println("\nConnected to WiFi");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-  
-  // Display signal strength
-  int rssi = WiFi.RSSI();
-  Serial.print("Signal strength (RSSI): ");
-  Serial.print(rssi);
-  Serial.println(" dBm");
-  
-  // Signal quality assessment
-  if (rssi > -50) {
-    Serial.println("Signal: Excellent");
-  } else if (rssi > -60) {
-    Serial.println("Signal: Good");
-  } else if (rssi > -70) {
-    Serial.println("Signal: Fair");
-  } else {
-    Serial.println("Signal: Poor - consider repositioning");
-  }
+  // Connect to WiFi using more robust method
+  connectToWiFi();
   
   // Configure Firebase
   config.host = FIREBASE_HOST;
@@ -97,53 +66,173 @@ void setup() {
   Serial.println("Firebase initialized");
   
   // Send data to establish initial values in Firebase
+  registerDevice();
   createInitialFirebaseData();
 }
 
 void loop() {
   unsigned long currentTime = millis();
   
-  // Check WiFi connection periodically
-  static unsigned long lastWiFiCheck = 0;
-  if (currentTime - lastWiFiCheck > 300000) { // Every 5 minutes
-    checkWiFiConnection();
-    lastWiFiCheck = currentTime;
-  }
-  
-  // Read data from Arduino
-  if (arduinoSerial.available()) {
-    String data = arduinoSerial.readStringUntil('\n');
-    Serial.print("Data from Arduino: ");
-    Serial.println(data);
-    
-    if (data.length() > 5) { // Minimum valid data length check
-      parseArduinoData(data);
-      lastDataTime = currentTime;
+  // Check WiFi connection first
+  if (WiFi.status() == WL_CONNECTED) {
+    if (!wifiConnected) {
+      // WiFi just reconnected
+      Serial.println("WiFi reconnected successfully");
+      Serial.print("IP Address: ");
+      Serial.println(WiFi.localIP());
+      wifiConnected = true;
+      
+      // Update device status in Firebase after reconnection
+      if (Firebase.ready()) {
+        updateDeviceStatus();
+      }
     }
-  }
-  
-  // Check connection status
-  if (currentTime - lastDataTime > CONNECTION_TIMEOUT) {
-    handleConnectionLost();
-  }
-  
-  // Update Firebase periodically
-  static unsigned long lastFirebaseUpdate = 0;
-  if (currentTime - lastFirebaseUpdate > 60000) { // Every minute
-    updateFirebase();
-    lastFirebaseUpdate = currentTime;
-  }
-  
-  // Check for Firebase commands
-  static unsigned long lastCommandCheck = 0;
-  if (currentTime - lastCommandCheck > 5000) { // Every 5 seconds
-    checkFirebaseCommands();
-    lastCommandCheck = currentTime;
+    
+    // Read data from Arduino
+    if (arduinoSerial.available()) {
+      String data = arduinoSerial.readStringUntil('\n');
+      Serial.print("Data from Arduino: ");
+      Serial.println(data);
+      
+      if (data.length() > 5) { // Minimum valid data length check
+        parseArduinoData(data);
+        lastDataTime = currentTime;
+      }
+    }
+    
+    // Check connection status
+    if (currentTime - lastDataTime > CONNECTION_TIMEOUT) {
+      handleConnectionLost();
+    }
+    
+    // Update Firebase periodically
+    static unsigned long lastFirebaseUpdate = 0;
+    if (currentTime - lastFirebaseUpdate > 60000) { // Every minute
+      updateFirebase();
+      lastFirebaseUpdate = currentTime;
+    }
+    
+    // Check for Firebase commands
+    static unsigned long lastCommandCheck = 0;
+    if (currentTime - lastCommandCheck > 5000) { // Every 5 seconds
+      checkFirebaseCommands();
+      lastCommandCheck = currentTime;
+    }
+  } else {
+    // WiFi is not connected
+    wifiConnected = false;
+    Serial.print("Trying to connect with ");
+    Serial.print(WIFI_SSID);
+    Serial.println("...");
+    
+    // Attempt to reconnect
+    connectToWiFi();
   }
   
   // Allow ESP8266 to process background tasks
   yield();
   delay(100);
+}
+
+void connectToWiFi() {
+  wifiRetries = 0;
+  
+  // Set as station mode
+  WiFi.mode(WIFI_STA);
+  
+  // Disable WiFi sleep to improve stability
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  
+  // Enable auto-reconnect
+  WiFi.setAutoReconnect(true);
+  
+  // Start connection
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to ");
+  Serial.print(WIFI_SSID);
+  Serial.println("...");
+  
+  // Wait for connection with timeout
+  while (WiFi.status() != WL_CONNECTED && wifiRetries < MAX_WIFI_RETRIES) {
+    Serial.print(".");
+    wifiRetries++;
+    delay(1000);
+  }
+  
+  Serial.println();
+  
+  if (wifiRetries >= MAX_WIFI_RETRIES) {
+    // Timeout occurred
+    Serial.print("Unable to connect to ");
+    Serial.println(WIFI_SSID);
+    Serial.println("Will retry in the main loop...");
+    wifiConnected = false;
+  } else if (WiFi.status() == WL_CONNECTED) {
+    // WiFi connected successfully
+    Serial.print("Successfully connected to ");
+    Serial.println(WIFI_SSID);
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    
+    // Display signal strength
+    int rssi = WiFi.RSSI();
+    Serial.print("Signal strength (RSSI): ");
+    Serial.print(rssi);
+    Serial.println(" dBm");
+    
+    // Signal quality assessment
+    if (rssi > -50) {
+      Serial.println("Signal: Excellent");
+    } else if (rssi > -60) {
+      Serial.println("Signal: Good");
+    } else if (rssi > -70) {
+      Serial.println("Signal: Fair");
+    } else {
+      Serial.println("Signal: Poor - consider repositioning");
+    }
+    
+    wifiConnected = true;
+  }
+}
+
+void registerDevice() {
+  if (Firebase.ready()) {
+    FirebaseJson json;
+    
+    json.set("name", deviceName);
+    json.set("id", deviceID);
+    json.set("firmwareVersion", firmwareVersion);
+    json.set("ipAddress", WiFi.localIP().toString());
+    json.set("macAddress", WiFi.macAddress());
+    json.set("rssi", WiFi.RSSI());
+    json.set("status", "online");
+    json.set("timestamp/.sv", "timestamp");
+    
+    if (Firebase.updateNode(fbdo, "devices/" + deviceID, json)) {
+      Serial.println("Device registered in Firebase");
+    } else {
+      Serial.println("Failed to register device");
+      Serial.println(fbdo.errorReason());
+    }
+  }
+}
+
+void updateDeviceStatus() {
+  if (Firebase.ready()) {
+    FirebaseJson json;
+    
+    json.set("ipAddress", WiFi.localIP().toString());
+    json.set("rssi", WiFi.RSSI());
+    json.set("status", "online");
+    json.set("lastSeen/.sv", "timestamp");
+    
+    if (Firebase.updateNode(fbdo, "devices/" + deviceID, json)) {
+      Serial.println("Device status updated");
+    } else {
+      Serial.println("Failed to update device status");
+      Serial.println(fbdo.errorReason());
+    }
+  }
 }
 
 void createInitialFirebaseData() {
@@ -157,7 +246,7 @@ void createInitialFirebaseData() {
     json.set("deviceState", 0);
     json.set("timestamp/.sv", "timestamp");
     
-    if (Firebase.updateNode(fbdo, "smart_plugs/plug1", json)) {
+    if (Firebase.updateNode(fbdo, "smart_plugs/" + deviceID, json)) {
       Serial.println("Initial data created in Firebase");
     } else {
       Serial.println("Failed to create initial data");
@@ -168,34 +257,11 @@ void createInitialFirebaseData() {
     FirebaseJson cmdJson;
     cmdJson.set("state", false);
     
-    if (Firebase.updateNode(fbdo, "smart_plugs/plug1/commands/relay", cmdJson)) {
+    if (Firebase.updateNode(fbdo, "smart_plugs/" + deviceID + "/commands/relay", cmdJson)) {
       Serial.println("Command node created in Firebase");
     } else {
       Serial.println("Failed to create command node");
       Serial.println(fbdo.errorReason());
-    }
-  }
-}
-
-void checkWiFiConnection() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi connection lost. Reconnecting...");
-    WiFi.disconnect();
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    
-    // Wait for connection with timeout
-    const int WIFI_TIMEOUT = 20000; // 20 seconds
-    unsigned long startAttempt = millis();
-    while (WiFi.status() != WL_CONNECTED && 
-           millis() - startAttempt < WIFI_TIMEOUT) {
-      delay(500);
-      Serial.print(".");
-    }
-    
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\nReconnected to WiFi");
-    } else {
-      Serial.println("\nFailed to reconnect. Will try again later.");
     }
   }
 }
@@ -249,7 +315,7 @@ void handleEmergency(String message) {
       json.set("temperature", temperature);
       json.set("timestamp/.sv", "timestamp");
       
-      if (Firebase.pushJSON(fbdo, "smart_plugs/plug1/events", json)) {
+      if (Firebase.pushJSON(fbdo, "smart_plugs/" + deviceID + "/events", json)) {
         Serial.println("Emergency event recorded in Firebase");
       } else {
         Serial.println("Failed to record emergency event");
@@ -270,7 +336,7 @@ void handleWarning(String message) {
       json.set("temperature", temperature);
       json.set("timestamp/.sv", "timestamp");
       
-      if (Firebase.pushJSON(fbdo, "smart_plugs/plug1/events", json)) {
+      if (Firebase.pushJSON(fbdo, "smart_plugs/" + deviceID + "/events", json)) {
         Serial.println("Warning event recorded in Firebase");
       } else {
         Serial.println("Failed to record warning event");
@@ -294,7 +360,7 @@ void handleConnectionLost() {
       json.set("attempt", reconnectAttempts);
       json.set("timestamp/.sv", "timestamp");
       
-      Firebase.pushJSON(fbdo, "smart_plugs/plug1/events", json);
+      Firebase.pushJSON(fbdo, "smart_plugs/" + deviceID + "/events", json);
     }
     
     // Attempt to reconnect
@@ -312,7 +378,7 @@ void handleConnectionLost() {
       json.set("status", "failed");
       json.set("timestamp/.sv", "timestamp");
       
-      Firebase.pushJSON(fbdo, "smart_plugs/plug1/events", json);
+      Firebase.pushJSON(fbdo, "smart_plugs/" + deviceID + "/events", json);
     }
   }
 }
@@ -326,10 +392,12 @@ void updateFirebase() {
     json.set("temperature", temperature);
     json.set("relayState", relayState);
     json.set("deviceState", deviceState);
+    json.set("rssi", WiFi.RSSI());
     json.set("timestamp/.sv", "timestamp");
     
-    if (Firebase.updateNode(fbdo, "smart_plugs/plug1", json)) {
+    if (Firebase.updateNode(fbdo, "smart_plugs/" + deviceID, json)) {
       Serial.println("Data updated in Firebase");
+      reconnectAttempts = 0; // Reset reconnect attempts after successful update
     } else {
       Serial.println("Failed to update data");
       Serial.println(fbdo.errorReason());
@@ -340,7 +408,7 @@ void updateFirebase() {
 void checkFirebaseCommands() {
   if (Firebase.ready()) {
     // Get relay command from Firebase
-    if (Firebase.getJSON(fbdo, "smart_plugs/plug1/commands/relay")) {
+    if (Firebase.getJSON(fbdo, "smart_plugs/" + deviceID + "/commands/relay")) {
       FirebaseJson json;
       FirebaseJsonData result;
       
