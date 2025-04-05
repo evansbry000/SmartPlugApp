@@ -6,8 +6,8 @@
  
 //Specifying the SSID and Password of the Local WiFi Network
  
-const char* ssid = "FatLARDbev"; //“your_wifi_ssid”
-const char* password = "fatlardr6"; //"your_wifi_password"
+const char* ssid = "Corner Office"; //“your_wifi_ssid”
+const char* password = "WhyweeAlecBev"; //"your_wifi_password"
  
 uint8_t retries=0;
  

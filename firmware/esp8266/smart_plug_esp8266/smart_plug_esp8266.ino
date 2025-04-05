@@ -3,18 +3,40 @@
 #include <ArduinoJson.h>
 #include <SoftwareSerial.h>
 
+// Debug mode - set to true for more detailed information
+#define DEBUG_MODE true
+
+// Maximum number of connection attempts before rebooting
+#define MAX_BOOT_ATTEMPTS 3
+int bootAttempts = 0;
+
 // WiFi credentials
-const char* WIFI_SSID = "FatLARDbev";
-const char* WIFI_PASSWORD = "fatlardr6";
+const char* WIFI_SSID = "Corner Office";  // Update to your current network
+const char* WIFI_PASSWORD = "fatlardr6";  // Use your actual password
+
+// Static IP configuration (optional)
+// Uncomment and configure these if you want to use static IP
+// IPAddress staticIP(192,168,4,200);
+// IPAddress gateway(192,168,4,1);
+// IPAddress subnet(255,255,255,0);
+// IPAddress dns1(8,8,8,8);
 
 // Firebase configuration
 const char* FIREBASE_HOST = "smartplugdatabase-f1fd4.firebaseio.com";
-const char* FIREBASE_AUTH = "AIzaSyCDETZaO4KfbuahJuCrvupJgo4nFPvkA8E";
+const char* FIREBASE_AUTH = "HpJdlh2JYLAyxFuORNf4CmygciMeIwbC1ZZpWAjG"; // Database Secret
 
 // Firebase data object
 FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig config;
+
+// Check if we're using an older Firebase library (before v3.0.0)
+// You might need to modify this depending on your library version
+#ifdef FIREBASE_ESP8266_VERSION
+  #if FIREBASE_ESP8266_VERSION < 300
+    #define FIREBASE_USE_LEGACY_API
+  #endif
+#endif
 
 // Serial communication with Arduino
 const int ARDUINO_RX = D6;  // ESP8266 RX pin (connect to Arduino TX: D11)
@@ -38,6 +60,11 @@ uint8_t wifiRetries = 0;
 const uint8_t MAX_WIFI_RETRIES = 20;
 bool wifiConnected = false;
 
+// Firebase connection status
+bool firebaseConnected = false;
+unsigned long lastFirebaseConnectionAttempt = 0;
+const unsigned long FIREBASE_RECONNECT_INTERVAL = 10000; // 10 seconds
+
 // Device Info
 String deviceID = "plug1";
 String deviceName = "Smart Plug";
@@ -50,28 +77,88 @@ void setup() {
   Serial.println("\n\nESP8266 Smart Plug starting...");
   Serial.println("Firmware version: " + firmwareVersion);
   
+  // Print MAC address right away
+  Serial.print("ESP8266 MAC Address: ");
+  Serial.println(WiFi.macAddress());
+  
   // Initialize SoftwareSerial for communication with Arduino
   arduinoSerial.begin(115200);
   
   // Connect to WiFi using more robust method
   connectToWiFi();
   
-  // Configure Firebase
-  config.host = FIREBASE_HOST;
-  config.api_key = FIREBASE_AUTH;
-  
-  Firebase.begin(&config, &auth);
-  Firebase.reconnectWiFi(true);
-  
-  Serial.println("Firebase initialized");
-  
-  // Send data to establish initial values in Firebase
-  registerDevice();
-  createInitialFirebaseData();
+  if (wifiConnected) {
+    bootAttempts = 0; // Reset boot attempts on successful connection
+    
+    // Initialize Firebase with the simplest approach
+    Serial.println("Initializing Firebase...");
+    
+    // Format the host properly
+    String host = FIREBASE_HOST;
+    if (host.startsWith("https://")) {
+      host = host.substring(8);
+    }
+    if (host.endsWith("/")) {
+      host = host.substring(0, host.length() - 1);
+    }
+    
+    Serial.print("Using Firebase Host: ");
+    Serial.println(host);
+    
+    // ABSOLUTE SIMPLEST INITIALIZATION - Using first principles
+    fbdo.setReuseStringObject(true); // Optimize for memory
+    
+    // Try to detect the version and use appropriate initialization method
+    Serial.println("Using direct host/auth initialization");
+    
+    // Set the values directly in Firebase object properties
+    FirebaseData::setDefaultHost(host.c_str());
+    FirebaseData::setDefaultAuth(FIREBASE_AUTH);
+    
+    // Call simple init function
+    if(Firebase.reconnect()) {
+      Serial.println("Firebase initialized via direct method");
+    } else {
+      Serial.println("Failed to initialize Firebase directly");
+    }
+    
+    Firebase.reconnectWiFi(true);
+    
+    // Test Firebase connection
+    testFirebaseConnection();
+    
+    // Send data to establish initial values in Firebase
+    if (firebaseConnected) {
+      registerDevice();
+      createInitialFirebaseData();
+    }
+  } else {
+    bootAttempts++;
+    if (bootAttempts >= MAX_BOOT_ATTEMPTS) {
+      Serial.println("Failed to connect to WiFi after multiple attempts. Rebooting ESP8266...");
+      ESP.restart();
+    }
+  }
 }
 
 void loop() {
+  static unsigned long lastRebootCheck = 0;
   unsigned long currentTime = millis();
+  
+  // Every 5 minutes, check if we need to reboot due to persistent issues
+  if (currentTime - lastRebootCheck > 300000) {
+    lastRebootCheck = currentTime;
+    
+    if (!wifiConnected) {
+      bootAttempts++;
+      if (bootAttempts >= MAX_BOOT_ATTEMPTS) {
+        Serial.println("Persistent connection issues detected. Rebooting ESP8266...");
+        ESP.restart();
+      }
+    } else {
+      bootAttempts = 0; // Reset if currently connected
+    }
+  }
   
   // Check WiFi connection first
   if (WiFi.status() == WL_CONNECTED) {
@@ -82,45 +169,67 @@ void loop() {
       Serial.println(WiFi.localIP());
       wifiConnected = true;
       
+      // Test Firebase connection after WiFi reconnection
+      testFirebaseConnection();
+      
       // Update device status in Firebase after reconnection
-      if (Firebase.ready()) {
+      if (firebaseConnected) {
         updateDeviceStatus();
       }
     }
     
-    // Read data from Arduino
-    if (arduinoSerial.available()) {
-      String data = arduinoSerial.readStringUntil('\n');
-      Serial.print("Data from Arduino: ");
-      Serial.println(data);
-      
-      if (data.length() > 5) { // Minimum valid data length check
-        parseArduinoData(data);
-        lastDataTime = currentTime;
+    // If Firebase is not connected, try to reconnect periodically
+    if (!firebaseConnected && (currentTime - lastFirebaseConnectionAttempt > FIREBASE_RECONNECT_INTERVAL)) {
+      testFirebaseConnection();
+      lastFirebaseConnectionAttempt = currentTime;
+    }
+    
+    // Only proceed with Firebase operations if connected
+    if (firebaseConnected) {
+      // Read data from Arduino
+      if (arduinoSerial.available()) {
+        String data = arduinoSerial.readStringUntil('\n');
+        if (DEBUG_MODE) {
+          Serial.print("Data from Arduino: ");
+          Serial.println(data);
+        }
+        
+        if (data.length() > 5) { // Minimum valid data length check
+          parseArduinoData(data);
+          lastDataTime = currentTime;
+        }
       }
-    }
-    
-    // Check connection status
-    if (currentTime - lastDataTime > CONNECTION_TIMEOUT) {
-      handleConnectionLost();
-    }
-    
-    // Update Firebase periodically
-    static unsigned long lastFirebaseUpdate = 0;
-    if (currentTime - lastFirebaseUpdate > 60000) { // Every minute
-      updateFirebase();
-      lastFirebaseUpdate = currentTime;
-    }
-    
-    // Check for Firebase commands
-    static unsigned long lastCommandCheck = 0;
-    if (currentTime - lastCommandCheck > 5000) { // Every 5 seconds
-      checkFirebaseCommands();
-      lastCommandCheck = currentTime;
+      
+      // Check connection status
+      if (currentTime - lastDataTime > CONNECTION_TIMEOUT) {
+        handleConnectionLost();
+      }
+      
+      // Update Firebase periodically
+      static unsigned long lastFirebaseUpdate = 0;
+      if (currentTime - lastFirebaseUpdate > 60000) { // Every minute
+        updateFirebase();
+        lastFirebaseUpdate = currentTime;
+      }
+      
+      // Check for Firebase commands
+      static unsigned long lastCommandCheck = 0;
+      if (currentTime - lastCommandCheck > 5000) { // Every 5 seconds
+        checkFirebaseCommands();
+        lastCommandCheck = currentTime;
+      }
+    } else if (DEBUG_MODE) {
+      // Print message about Firebase not connected every 5 seconds
+      static unsigned long lastDebugPrint = 0;
+      if (currentTime - lastDebugPrint > 5000) {
+        Serial.println("Waiting for Firebase connection...");
+        lastDebugPrint = currentTime;
+      }
     }
   } else {
     // WiFi is not connected
     wifiConnected = false;
+    firebaseConnected = false;
     Serial.print("Trying to connect with ");
     Serial.print(WIFI_SSID);
     Serial.println("...");
@@ -134,43 +243,120 @@ void loop() {
   delay(100);
 }
 
+void testFirebaseConnection() {
+  Serial.println("Testing Firebase connection...");
+  
+  // Try to read a test value from Firebase
+  if (Firebase.ready() && Firebase.getString(fbdo, "/test")) {
+    Serial.println("Firebase connection successful!");
+    firebaseConnected = true;
+    
+    // Create a test node if it doesn't exist
+    FirebaseJson json;
+    json.set("lastConnection", WiFi.macAddress());
+    json.set("timestamp/.sv", "timestamp");
+    Firebase.updateNode(fbdo, "/test", json);
+  } else {
+    Serial.println("Firebase connection failed!");
+    Serial.print("Error reason: ");
+    Serial.println(fbdo.errorReason());
+    firebaseConnected = false;
+  }
+}
+
 void connectToWiFi() {
   wifiRetries = 0;
   
-  // Set as station mode
-  WiFi.mode(WIFI_STA);
+  Serial.println("\n\nAttempting to connect to WiFi with optimized settings...");
   
-  // Disable WiFi sleep to improve stability
+  // Disconnect if already connected
+  WiFi.disconnect(true);
+  delay(1000);
+  
+  // Set WiFi mode explicitly
+  WiFi.mode(WIFI_OFF);
+  delay(1000);
+  WiFi.mode(WIFI_STA);
+  delay(1000);
+  
+  // Disable sleep mode
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   
-  // Enable auto-reconnect
-  WiFi.setAutoReconnect(true);
+  // Maximum power
+  WiFi.setOutputPower(20.5);
   
-  // Start connection
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  // Optional: Set static IP if configured
+  // Uncomment this if you're using static IP
+  /*
+  if(staticIP.isSet()) {
+    Serial.println("Configuring static IP...");
+    WiFi.config(staticIP, gateway, subnet, dns1);
+  }
+  */
+  
+  // Set explicit channel requirements
+  // Some eero routers work better when we initially force 2.4GHz channels
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD, 1); // Start with channel 1
   Serial.print("Connecting to ");
   Serial.print(WIFI_SSID);
-  Serial.println("...");
+  Serial.println(" on channel 1...");
   
-  // Wait for connection with timeout
-  while (WiFi.status() != WL_CONNECTED && wifiRetries < MAX_WIFI_RETRIES) {
+  // Give it a few seconds on channel 1
+  for(int i = 0; i < 5; i++) {
+    if(WiFi.status() == WL_CONNECTED) {
+      wifiConnected = true;
+      break;
+    }
     Serial.print(".");
-    wifiRetries++;
     delay(1000);
   }
   
-  Serial.println();
+  // If that didn't work, try channel 6
+  if(!wifiConnected) {
+    Serial.println("\nTrying channel 6...");
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD, 6);
+    for(int i = 0; i < 5; i++) {
+      if(WiFi.status() == WL_CONNECTED) {
+        wifiConnected = true;
+        break;
+      }
+      Serial.print(".");
+      delay(1000);
+    }
+  }
   
-  if (wifiRetries >= MAX_WIFI_RETRIES) {
-    // Timeout occurred
-    Serial.print("Unable to connect to ");
-    Serial.println(WIFI_SSID);
-    Serial.println("Will retry in the main loop...");
-    wifiConnected = false;
-  } else if (WiFi.status() == WL_CONNECTED) {
+  // If still not connected, try channel 11
+  if(!wifiConnected) {
+    Serial.println("\nTrying channel 11...");
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD, 11);
+    for(int i = 0; i < 5; i++) {
+      if(WiFi.status() == WL_CONNECTED) {
+        wifiConnected = true;
+        break;
+      }
+      Serial.print(".");
+      delay(1000);
+    }
+  }
+  
+  // If still not connected, let it auto-select channel
+  if(!wifiConnected) {
+    Serial.println("\nTrying auto channel selection...");
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    // Wait for connection with timeout
+    while (WiFi.status() != WL_CONNECTED && wifiRetries < MAX_WIFI_RETRIES) {
+      Serial.print(".");
+      wifiRetries++;
+      delay(1000);
+    }
+  }
+  
+  // Check connection status
+  if (WiFi.status() == WL_CONNECTED) {
     // WiFi connected successfully
-    Serial.print("Successfully connected to ");
-    Serial.println(WIFI_SSID);
+    wifiConnected = true;
+    Serial.println("\nSuccessfully connected to WiFi");
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
     
@@ -191,22 +377,27 @@ void connectToWiFi() {
       Serial.println("Signal: Poor - consider repositioning");
     }
     
-    wifiConnected = true;
+    // Display channel information
+    Serial.print("Connected on channel: ");
+    Serial.println(WiFi.channel());
+  } else {
+    // Connection failed
+    wifiConnected = false;
+    Serial.println("\nFailed to connect to WiFi");
+    Serial.println("Will retry again later");
   }
 }
 
 void registerDevice() {
   if (Firebase.ready()) {
     FirebaseJson json;
-    
     json.set("name", deviceName);
     json.set("id", deviceID);
     json.set("firmwareVersion", firmwareVersion);
     json.set("ipAddress", WiFi.localIP().toString());
     json.set("macAddress", WiFi.macAddress());
-    json.set("rssi", WiFi.RSSI());
+    json.set("lastSeen/.sv", "timestamp");
     json.set("status", "online");
-    json.set("timestamp/.sv", "timestamp");
     
     if (Firebase.updateNode(fbdo, "devices/" + deviceID, json)) {
       Serial.println("Device registered in Firebase");
@@ -267,6 +458,12 @@ void createInitialFirebaseData() {
 }
 
 void parseArduinoData(String data) {
+  // Simple validity check before attempting to parse
+  if (data.length() < 10 || !data.startsWith("C:")) {
+    Serial.println("Invalid data received: " + data);
+    return;
+  }
+  
   // Parse the data string in format: "C:current,P:power,T:temperature,R:relayState,S:deviceState"
   int cStart = data.indexOf("C:") + 2;
   int cEnd = data.indexOf(",P:");
@@ -366,7 +563,7 @@ void handleConnectionLost() {
     // Attempt to reconnect
     arduinoSerial.end();
     delay(1000);
-    arduinoSerial.begin(9600);
+    arduinoSerial.begin(115200);
     delay(RECONNECT_INTERVAL);
   } else {
     Serial.println("Max reconnection attempts reached. Manual intervention required.");

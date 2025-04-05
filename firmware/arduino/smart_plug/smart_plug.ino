@@ -44,6 +44,12 @@ DeviceState currentState = OFF;
 #include <SoftwareSerial.h>
 SoftwareSerial espSerial(ESP_RX_PIN, ESP_TX_PIN); // RX, TX
 
+// Uncomment and configure with values matching your network
+IPAddress staticIP(192,168,4,200); // Choose unused IP
+IPAddress gateway(192,168,4,1);    // Your router's IP
+IPAddress subnet(255,255,255,0);
+IPAddress dns1(8,8,8,8);
+
 void setup() {
   Serial.begin(9600);  // Serial monitor for debugging
   espSerial.begin(9600); // Communication with ESP8266
