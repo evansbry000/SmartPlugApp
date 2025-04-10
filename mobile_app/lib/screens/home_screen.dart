@@ -5,6 +5,10 @@ import '../services/smart_plug_service.dart';
 import '../widgets/power_usage_chart.dart';
 import '../widgets/relay_control.dart';
 import '../widgets/current_readings.dart';
+import '../widgets/notification_badge.dart';
+import '../widgets/connection_status.dart';
+import '../widgets/recent_events.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -15,6 +19,18 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Smart Plug'),
         actions: [
+          const NotificationBadge(),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SettingsScreen(),
+                ),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () {
@@ -39,11 +55,15 @@ class HomeScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const ConnectionStatus(),
+                const SizedBox(height: 16),
                 const RelayControl(),
                 const SizedBox(height: 24),
                 const CurrentReadings(),
                 const SizedBox(height: 24),
                 const PowerUsageChart(),
+                const SizedBox(height: 24),
+                const RecentEventsWidget(maxEvents: 3),
               ],
             ),
           );

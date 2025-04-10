@@ -30,6 +30,7 @@ float current = 0.0;
 float power = 0.0;
 float temperature = 0.0;
 bool relayState = false;
+bool emergencyStatus = false;       // Flag for emergency conditions
 unsigned long lastReadingTime = 0;
 const unsigned long READING_INTERVAL = 30000; // 30 seconds
 
@@ -62,6 +63,9 @@ void setup() {
   
   pinMode(CURRENT_SENSOR_PIN, INPUT);
   pinMode(TEMP_SENSOR_PIN, INPUT);
+  
+  // Initialize variables
+  emergencyStatus = false;
   
   Serial.println("Smart Plug Initialized");
   espSerial.println("Arduino Ready");
@@ -153,6 +157,10 @@ void checkTemperature() {
   if (temperature >= TEMP_SHUTOFF) {
     // Emergency shutoff
     setRelay(false);
+    
+    // Set emergency flag
+    emergencyStatus = true;
+    
     // Send emergency shutoff notification
     espSerial.println("EMERGENCY:TEMP_SHUTOFF");
     Serial.println("EMERGENCY: Temperature shutoff threshold reached!");
@@ -160,11 +168,16 @@ void checkTemperature() {
     // Send warning notification
     espSerial.println("WARNING:HIGH_TEMP");
     Serial.println("WARNING: High temperature detected!");
+  } else if (emergencyStatus && temperature < (TEMP_WARNING - 5.0)) {
+    // Reset emergency status if temperature drops below warning level minus 5°C (hysteresis)
+    emergencyStatus = false;
+    espSerial.println("INFO:TEMP_NORMAL");
+    Serial.println("INFO: Temperature returned to normal range");
   }
 }
 
 void sendDataToESP8266() {
-  // Format: "C:current,P:power,T:temperature,R:relayState,S:deviceState"
+  // Format: "C:current,P:power,T:temperature,R:relayState,S:deviceState,E:emergencyStatus"
   espSerial.print("C:");
   espSerial.print(current);
   espSerial.print(",P:");
@@ -174,7 +187,9 @@ void sendDataToESP8266() {
   espSerial.print(",R:");
   espSerial.print(relayState);
   espSerial.print(",S:");
-  espSerial.println(currentState);
+  espSerial.print(currentState);
+  espSerial.print(",E:");
+  espSerial.println(emergencyStatus ? "1" : "0");
 }
 
 void setRelay(bool state) {

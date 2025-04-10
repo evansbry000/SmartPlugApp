@@ -1,131 +1,166 @@
 # Smart Plug App
 
-A Flutter web application for monitoring and controlling smart plugs with real-time data visualization, temperature monitoring, and surge protection for high-powered appliances.
+A comprehensive IoT solution for monitoring and controlling smart plugs, with real-time data collection, power monitoring, and temperature safety features.
 
-## Features
+## Project Components
 
-- User Authentication (Sign up, Login, Sign out)
-- Real-time monitoring of:
-  - Current consumption
-  - Power usage
-  - Temperature readings
-  - Device state (off/idle/running)
-  - Relay status
-- Temperature warning system with automatic shutoff
-- Integrated surge protection for high-powered appliances
-- Historical data visualization
-- Device control (toggle on/off)
-- User settings and preferences
-- Notification preferences
+1. **Hardware**
+   - Arduino R4 WiFi board with temperature and current sensors
+   - Relay module for power control
 
-## Project Structure
+2. **Firmware**
+   - Arduino R4 firmware for sensor readings, power control and WiFi connectivity
+   - Firebase integration for direct cloud communication
+
+3. **Cloud Infrastructure**
+   - Firebase Realtime Database for real-time data
+   - Firestore for historical data storage
+   - Firebase Cloud Functions for data mirroring and processing
+   - Firebase Hosting for web application
+
+4. **Mobile App**
+   - Flutter web application
+   - Real-time monitoring
+   - Historical data visualization
+   - Device control
+   - Notifications
+
+## Data Flow
+
+1. Arduino R4 reads sensor data (current, power, temperature) and controls relay
+2. Arduino R4's built-in WiFi connects directly to Firebase Realtime Database
+3. Cloud Functions mirror data from RTDB to Firestore (every 2 minutes for historical data)
+4. Mobile app reads real-time data from RTDB and historical data from Firestore
+
+## Data Structure
+
+### Realtime Database
 
 ```
-SmartPlugApp/
-├── mobile_app/                 # Flutter web application
-│   ├── lib/
-│   │   ├── screens/           # UI screens
-│   │   ├── services/          # Business logic and Firebase services
-│   │   ├── widgets/           # Reusable UI components
-│   │   └── main.dart          # Application entry point
-│   ├── web/                   # Web-specific files
-│   └── pubspec.yaml           # Flutter dependencies
-├── firmware/                   # Arduino and ESP8266 firmware
-│   ├── arduino/               # Arduino code for sensor reading
-│   └── esp8266/               # ESP8266 code for WiFi and Firebase
-└── firestore.rules            # Firebase security rules
+devices/
+  plug1/
+    status/
+      current: 0.0          # Current in Amperes
+      power: 0.0            # Power in Watts
+      temperature: 25.0     # Temperature in Celsius
+      relayState: false     # Whether the relay is on or off
+      deviceState: 0        # 0=OFF, 1=IDLE, 2=RUNNING
+      emergencyStatus: false # Whether there's an emergency condition
+      uptime: 3600          # Session uptime in seconds
+      timestamp: ServerTimestamp
+    commands/
+      relay: { state: false, processed: true, timestamp: ServerTimestamp }
+    events/
+      -LxYz.../
+        type: "emergency"  # Type can be "emergency", "warning", or "info"
+        message: "HIGH_TEMP"
+        temperature: 45.0
+        timestamp: ServerTimestamp
 ```
 
-## Hardware Requirements
+### Firestore Database
 
-- ESP8266 NodeMCU development board
-- ACS712 current sensor (30A)
-- LM35 temperature sensor
-- MOV surge protection circuit
-- Relay module
-- Power supply
-- USB cable for programming
+```
+smart_plugs/
+  plug1/
+    current: 0.0
+    power: 0.0
+    temperature: 25.0
+    relayState: false
+    deviceState: 0
+    emergencyStatus: false
+    uptime: 3600
+    timestamp: Timestamp
+    history/
+      readings/
+        -LxYz.../
+          current: 0.0
+          power: 0.0
+          temperature: 25.0
+          relayState: false
+          deviceState: 0
+          emergencyStatus: false
+          uptime: 3600
+          timestamp: Timestamp
+      events/
+        -LxYz.../
+          type: "emergency"
+          message: "HIGH_TEMP"
+          temperature: 45.0
+          timestamp: Timestamp
+```
 
-## Software Requirements
+## Data Retention Policy
 
-- Flutter SDK
-- Firebase CLI
-- Arduino IDE
-- ESP8266 board support for Arduino IDE
-
-## Setup Instructions
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/SmartPlugApp.git
-   cd SmartPlugApp
-   ```
-
-2. Install Flutter dependencies:
-   ```bash
-   cd mobile_app
-   flutter pub get
-   ```
-
-3. Configure Firebase:
-   - Create a new Firebase project
-   - Enable Authentication (Email/Password)
-   - Enable Firestore Database
-   - Add web app to Firebase project
-   - Copy Firebase configuration to `lib/firebase_config.dart`
-
-4. Run the web app:
-   ```bash
-   flutter run -d chrome
-   ```
-
-5. Upload firmware:
-   - Open Arduino IDE
-   - Install required libraries
-   - Upload Arduino code to Arduino board
-   - Upload ESP8266 code to ESP8266 board
+Historical data is managed with the following retention periods:
+- Detailed readings: 7 days
+- Hourly averages: 30 days
+- Daily averages: 1 year
 
 ## Firebase Configuration
 
-The app uses Firebase for:
-- User Authentication
-- Real-time data storage
-- Device state management
-- User preferences
+The project uses the following Firebase configuration files:
 
-## Hardware Configuration
+- **firebase.json**: Main configuration file for Firebase tools
+- **firestore.rules**: Security rules for Firestore
+- **firestore.indexes.json**: Indexes for Firestore queries
+- **database.rules.json**: Security rules for Realtime Database
+- **.firebaserc**: Project configuration
 
-The system includes:
-- ESP8266 for WiFi connectivity and Firebase communication
-- Arduino for sensor reading and direct device control
-- ACS712 for current sensing (up to 30A)
-- LM35 for temperature monitoring
-- Metal Oxide Varistor (MOV) based surge protection circuit
-- Relay for device switching
+## Setup Instructions
 
-## Safety Features
+### Hardware Setup
 
-The smart plug includes several safety features for high-powered devices:
-- Temperature monitoring with automatic shutoff
-- Surge protection for voltage spikes
-- Current monitoring to detect abnormal operation
-- Remote control to turn off devices when not in use
+1. Connect current sensor to Arduino R4 analog pin A0
+2. Connect temperature sensor to Arduino R4 analog pin A1
+3. Connect relay module to Arduino R4 digital pin D7
+4. Power up the system
 
-## Security
+### Firmware Setup
 
-- Firebase Authentication for user management
-- Firestore security rules for data access control
-- HTTPS for secure communication
-- User-specific data isolation
+1. Configure your WiFi credentials in the Arduino R4 sketch
+2. Upload `arduinor4full.ino` to Arduino R4
+3. Monitor serial output for connection status
 
-## Development
+### Cloud Functions Setup
 
-To contribute to the project:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+1. Install Firebase CLI: `npm install -g firebase-tools`
+2. Login to Firebase: `firebase login`
+3. Navigate to root directory
+4. Deploy Firebase configuration:
+   ```bash
+   firebase deploy
+   ```
+
+### Mobile App Setup
+
+1. Navigate to `mobile_app` directory
+2. Install dependencies: `flutter pub get`
+3. Build the web app:
+   ```bash
+   flutter build web
+   ```
+4. Deploy to Firebase Hosting:
+   ```bash
+   cd ..
+   firebase deploy --only hosting
+   ```
+
+## Authentication
+
+### Mobile App
+- Uses Email/Password authentication
+- Configure this in the Firebase Console > Authentication > Sign-in method
+- Add test users as needed
+
+### Arduino R4
+- Uses Legacy Database Secret for authentication
+- No additional setup required, already configured in the firmware
+
+## Screenshots
+
+*[Insert screenshots of the app here]*
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+*[Insert license information here]*

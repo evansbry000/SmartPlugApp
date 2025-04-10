@@ -25,7 +25,8 @@ const char* WIFI_PASSWORD = "fatlardr6";
 
 // Firebase configuration
 const char* FIREBASE_API_KEY = "AIzaSyCDETZaO4KfbuahJuCrvupJgo4nFPvkA8E";
-const char* FIREBASE_DATABASE_URL = "https://smartplugdatabase-f1fd4.firebaseio.com";
+const char* FIREBASE_DATABASE_URL = "https://smartplugdatabase-f1fd4-default-rtdb.firebaseio.com/";
+const char* FIREBASE_DATABASE_SECRET = "HpJdlh2JYLAyxFuORNf4CmygciMeIwbC1ZZpWAjG"; // Legacy secret for direct ESP32 authentication
 
 // Device Information
 String deviceID = "plug1";  // Unique device identifier
@@ -45,8 +46,11 @@ float energy = 0.0;
 float temperature = 0.0;
 bool relayState = false;
 int deviceState = 0;  // 0: OFF, 1: IDLE, 2: RUNNING
+bool emergencyStatus = false; // New flag for emergency status
 unsigned long powerOnTime = 0;
 unsigned long totalOnTime = 0;
+unsigned long sessionUptime = 0; // Session-based uptime in seconds
+unsigned long uptimeLastCheck = 0; // Last time uptime was updated
 
 // Connection handling
 unsigned long lastDataTime = 0;
@@ -92,6 +96,10 @@ void setup() {
   
   // Configure Firebase
   setupFirebase();
+  
+  // Initialize sessionUptime and uptimeLastCheck
+  sessionUptime = 0;
+  uptimeLastCheck = millis();
   
   blinkLED(3, 200); // Setup complete indicator
   Serial.println("Setup completed");
@@ -283,13 +291,25 @@ void setupOTA() {
 }
 
 void setupFirebase() {
+  Serial.println("Setting up Firebase connection...");
+  
+  // Configure Firebase credentials
   config.api_key = FIREBASE_API_KEY;
   config.database_url = FIREBASE_DATABASE_URL;
+  
+  // Use legacy token authentication for ESP32
+  config.signer.tokens.legacy_token = FIREBASE_DATABASE_SECRET;
   
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
   
-  Serial.println("Firebase initialized");
+  // Set database read timeout to 1 minute
+  Firebase.setReadTimeout(fbdo, 1000 * 60);
+  
+  // Set larger response buffer size
+  Firebase.setResponseSize(fbdo, 4096);
+  
+  Serial.println("Firebase setup complete!");
   
   // Register device in Firebase
   registerDevice();
@@ -491,6 +511,11 @@ void updateFirebase() {
     return;
   }
   
+  // Update session uptime (in seconds)
+  unsigned long currentMillis = millis();
+  sessionUptime += (currentMillis - uptimeLastCheck) / 1000;
+  uptimeLastCheck = currentMillis;
+  
   // Create JSON document for device status
   FirebaseJson json;
   json.set("current", current);
@@ -500,6 +525,8 @@ void updateFirebase() {
   json.set("temperature", temperature);
   json.set("relayState", relayState);
   json.set("deviceState", deviceState);
+  json.set("emergencyStatus", emergencyStatus); // Add emergency status
+  json.set("uptime", sessionUptime); // Add session uptime
   json.set("totalOnTime", getTotalOnTimeFormatted());
   json.set("onTimeSeconds", getTotalOnTimeSeconds());
   json.set("timestamp/.sv", "timestamp");
@@ -772,4 +799,67 @@ String getTotalOnTimeFormatted() {
   char buffer[50];
   sprintf(buffer, "%lu days, %lu hours, %lu minutes, %lu seconds", days, hours, minutes, seconds);
   return String(buffer);
+}
+
+void checkTemperature() {
+  if (temperature >= TEMP_SHUTOFF) {
+    // Emergency shutoff
+    setRelay(false);
+    
+    // Set emergency status
+    emergencyStatus = true;
+    
+    // Send emergency shutoff notification
+    if (Firebase.ready()) {
+      FirebaseJson json;
+      json.set("type", "emergency");
+      json.set("message", "TEMP_SHUTOFF");
+      json.set("temperature", temperature);
+      json.set("timestamp/.sv", "timestamp");
+      
+      if (Firebase.RTDB.pushJSON(&fbdo, "events/" + deviceID, &json)) {
+        Serial.println("Emergency event recorded in Firebase");
+      } else {
+        Serial.println("Failed to record emergency event");
+        Serial.println(fbdo.errorReason());
+      }
+    }
+    
+    Serial.println("EMERGENCY: Temperature shutoff threshold reached!");
+  } else if (temperature >= TEMP_WARNING) {
+    // Send warning notification
+    if (Firebase.ready()) {
+      FirebaseJson json;
+      json.set("type", "warning");
+      json.set("message", "HIGH_TEMP");
+      json.set("temperature", temperature);
+      json.set("timestamp/.sv", "timestamp");
+      
+      if (Firebase.RTDB.pushJSON(&fbdo, "events/" + deviceID, &json)) {
+        Serial.println("Warning event recorded in Firebase");
+      } else {
+        Serial.println("Failed to record warning event");
+        Serial.println(fbdo.errorReason());
+      }
+    }
+    
+    Serial.println("WARNING: High temperature detected!");
+  } else {
+    // Reset emergency status if temperature is back to normal
+    if (emergencyStatus && temperature < TEMP_WARNING) {
+      emergencyStatus = false;
+      
+      if (Firebase.ready()) {
+        FirebaseJson json;
+        json.set("type", "info");
+        json.set("message", "TEMP_NORMAL");
+        json.set("temperature", temperature);
+        json.set("timestamp/.sv", "timestamp");
+        
+        Firebase.RTDB.pushJSON(&fbdo, "events/" + deviceID, &json);
+      }
+      
+      Serial.println("Temperature returned to normal range");
+    }
+  }
 } 

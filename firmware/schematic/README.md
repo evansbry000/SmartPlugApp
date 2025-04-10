@@ -2,6 +2,10 @@
 
 This directory contains information about the hardware design and schematic for the Smart Plug system.
 
+## Hardware Update
+
+**Note: The system has been upgraded to use the Arduino R4 WiFi board** instead of the previous Arduino + ESP8266/ESP32 combination. This simplifies the design by using a single board with integrated WiFi capabilities.
+
 ## Surge Protection Circuit Design
 
 The surge protection circuit is designed to protect high-powered appliances from voltage spikes and surges. The system uses:
@@ -26,30 +30,48 @@ The surge protection circuit is designed to protect high-powered appliances from
 ```
                                             ┌───────────────────┐
                                             │                   │
-               ┌─────────────┐             │    High-Powered   │
-               │             │             │                   │
-      ┌────────┤  ESP8266    │             │    Appliance /    │
-      │        │             │             │                   │
-      │        └──────┬──────┘             │    Device         │
-      │               │                    │                   │
-      │               │                    └────────┬──────────┘
-      │               │                             │
-      │        ┌──────┴──────┐                      │
-      │        │             │                      │
-┌─────┴────┐   │   Arduino   │    ┌──────────────┐  │
-│          │   │             │    │              │  │
-│ Firebase │   └──────┬──────┘    │   Relay     ├──┘
-│          │          │           │              │
-│ Cloud    │          │           └──────┬───────┘
-│          │          │                  │
-└──────────┘   ┌──────┴─────┐    ┌──────┴───────┐
-               │            │    │              │
-               │  Sensors   │    │  Surge       │
-               │  - Current │    │  Protection  │
-               │  - Temp    │    │  Circuit     │
-               │            │    │              │
-               └────────────┘    └──────────────┘
+                                            │    High-Powered   │
+                                            │                   │
+      ┌────────────────────┐               │    Appliance /    │
+      │                    │               │                   │
+      │     Arduino R4     │               │    Device         │
+      │      (WiFi)        │               │                   │
+      │                    │               └────────┬──────────┘
+      │                    │                        │
+      │                    ├────────────┐           │
+      │                    │            │           │
+┌─────┴────┐    ┌──────────┴────┐    ┌──┴───────┐  │
+│          │    │                │    │          │  │
+│ Firebase │    │    Sensors     │    │  Relay   ├──┘
+│          │    │  - Current     │    │          │
+│ Cloud    │    │  - Temperature │    └──────┬───┘
+│          │    │                │           │
+└──────────┘    └────────────────┘    ┌──────┴───────┐
+                                      │              │
+                                      │  Surge       │
+                                      │  Protection  │
+                                      │  Circuit     │
+                                      │              │
+                                      └──────────────┘
 ```
+
+## Arduino R4 WiFi Advantages
+
+The Arduino R4 WiFi offers several advantages for this project:
+
+1. **Integrated WiFi** - No need for separate WiFi module
+2. **Higher Processing Power** - Improved performance for sensor data processing
+3. **Simplified Wiring** - Eliminates serial communication between Arduino and ESP
+4. **Enhanced Security** - Better support for modern encryption and authentication
+5. **Improved Reliability** - Single-board solution reduces points of failure
+6. **USB-C Connectivity** - Modern connection for programming and debugging
+
+## Pin Configuration
+
+- **A0**: ACS712 Current Sensor
+- **A1**: LM35 Temperature Sensor  
+- **D7**: Relay Control
+- **LED_BUILTIN**: Status indicator
 
 ## Surge Protection Working Principle
 

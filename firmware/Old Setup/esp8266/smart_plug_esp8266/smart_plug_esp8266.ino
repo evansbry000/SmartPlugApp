@@ -22,7 +22,7 @@ const char* WIFI_PASSWORD = "fatlardr6";  // Use your actual password
 // IPAddress dns1(8,8,8,8);
 
 // Firebase configuration
-const char* FIREBASE_HOST = "smartplugdatabase-f1fd4.firebaseio.com";
+const char* FIREBASE_HOST = "smartplugdatabase-f1fd4-default-rtdb.firebaseio.com";
 const char* FIREBASE_AUTH = "HpJdlh2JYLAyxFuORNf4CmygciMeIwbC1ZZpWAjG"; // Database Secret
 
 // Firebase data object
@@ -49,6 +49,9 @@ float power = 0.0;
 float temperature = 0.0;
 bool relayState = false;
 int deviceState = 0;  // 0: OFF, 1: IDLE, 2: RUNNING
+bool emergencyStatus = false; // Flag for emergency status
+unsigned long sessionUptime = 0; // Session-based uptime in seconds
+unsigned long uptimeLastCheck = 0; // Last time uptime was updated
 
 // Connection handling
 unsigned long lastDataTime = 0;
@@ -139,6 +142,10 @@ void setup() {
       ESP.restart();
     }
   }
+  
+  // Initialize session uptime tracking
+  sessionUptime = 0;
+  uptimeLastCheck = millis();
 }
 
 void loop() {
@@ -458,87 +465,140 @@ void createInitialFirebaseData() {
 }
 
 void parseArduinoData(String data) {
-  // Simple validity check before attempting to parse
-  if (data.length() < 10 || !data.startsWith("C:")) {
-    Serial.println("Invalid data received: " + data);
-    return;
+  // Expected format: "C:current,P:power,T:temperature,R:relayState,S:deviceState,E:emergencyStatus"
+  float newCurrent = 0.0;
+  float newPower = 0.0;
+  float newTemperature = 0.0;
+  bool newRelayState = false;
+  int newDeviceState = 0;
+  bool newEmergencyStatus = false;
+  
+  // Parse the data
+  int cPos = data.indexOf("C:");
+  int pPos = data.indexOf(",P:");
+  int tPos = data.indexOf(",T:");
+  int rPos = data.indexOf(",R:");
+  int sPos = data.indexOf(",S:");
+  int ePos = data.indexOf(",E:");
+  
+  if (cPos != -1 && pPos != -1 && tPos != -1 && rPos != -1 && sPos != -1) {
+    newCurrent = data.substring(cPos + 2, pPos).toFloat();
+    newPower = data.substring(pPos + 3, tPos).toFloat();
+    newTemperature = data.substring(tPos + 3, rPos).toFloat();
+    newRelayState = data.substring(rPos + 3, sPos).toInt() == 1;
+    
+    // Check for emergency status field
+    if (ePos != -1) {
+      newDeviceState = data.substring(sPos + 3, ePos).toInt();
+      newEmergencyStatus = data.substring(ePos + 3).toInt() == 1;
+    } else {
+      newDeviceState = data.substring(sPos + 3).toInt();
+    }
+    
+    // Update values
+    current = newCurrent;
+    power = newPower;
+    temperature = newTemperature;
+    relayState = newRelayState;
+    deviceState = newDeviceState;
+    emergencyStatus = newEmergencyStatus;
+    
+    if (DEBUG_MODE) {
+      Serial.print("Parsed values - Current: ");
+      Serial.print(current);
+      Serial.print("A, Power: ");
+      Serial.print(power);
+      Serial.print("W, Temp: ");
+      Serial.print(temperature);
+      Serial.print("°C, Relay: ");
+      Serial.print(relayState ? "ON" : "OFF");
+      Serial.print(", State: ");
+      Serial.print(deviceState);
+      Serial.print(", Emergency: ");
+      Serial.println(emergencyStatus ? "YES" : "NO");
+    }
   }
   
-  // Parse the data string in format: "C:current,P:power,T:temperature,R:relayState,S:deviceState"
-  int cStart = data.indexOf("C:") + 2;
-  int cEnd = data.indexOf(",P:");
-  int pStart = data.indexOf("P:") + 2;
-  int pEnd = data.indexOf(",T:");
-  int tStart = data.indexOf("T:") + 2;
-  int tEnd = data.indexOf(",R:");
-  int rStart = data.indexOf("R:") + 2;
-  int rEnd = data.indexOf(",S:");
-  int sStart = data.indexOf("S:") + 2;
-  
-  // Check if all parts are found
-  if (cStart > 1 && cEnd > 0 && pStart > 1 && pEnd > 0 && 
-      tStart > 1 && tEnd > 0 && rStart > 1 && rEnd > 0 && sStart > 1) {
-    
-    current = data.substring(cStart, cEnd).toFloat();
-    power = data.substring(pStart, pEnd).toFloat();
-    temperature = data.substring(tStart, tEnd).toFloat();
-    relayState = data.substring(rStart, rEnd).toInt() == 1;
-    deviceState = data.substring(sStart).toInt();
-    
-    Serial.println("Parsed data:");
-    Serial.print("Current: "); Serial.print(current); Serial.println("A");
-    Serial.print("Power: "); Serial.print(power); Serial.println("W");
-    Serial.print("Temperature: "); Serial.print(temperature); Serial.println("°C");
-    Serial.print("Relay state: "); Serial.println(relayState ? "ON" : "OFF");
-    Serial.print("Device state: "); Serial.println(deviceState);
-  }
-  
-  // Check for emergency messages
-  if (data.startsWith("EMERGENCY:")) {
-    handleEmergency(data.substring(10));
-  } else if (data.startsWith("WARNING:")) {
-    handleWarning(data.substring(8));
+  // Check for special messages
+  if (data.indexOf("EMERGENCY:") >= 0) {
+    handleEmergency(data.substring(data.indexOf("EMERGENCY:") + 10));
+  } else if (data.indexOf("WARNING:") >= 0) {
+    handleWarning(data.substring(data.indexOf("WARNING:") + 8));
+  } else if (data.indexOf("INFO:") >= 0) {
+    handleInfo(data.substring(data.indexOf("INFO:") + 5));
   }
 }
 
 void handleEmergency(String message) {
-  if (message == "TEMP_SHUTOFF") {
-    // Update Firebase with emergency status
-    if (Firebase.ready()) {
-      FirebaseJson json;
-      
-      json.set("type", "emergency");
-      json.set("message", "Temperature exceeded shutoff threshold");
-      json.set("temperature", temperature);
-      json.set("timestamp/.sv", "timestamp");
-      
-      if (Firebase.pushJSON(fbdo, "smart_plugs/" + deviceID + "/events", json)) {
-        Serial.println("Emergency event recorded in Firebase");
-      } else {
-        Serial.println("Failed to record emergency event");
-        Serial.println(fbdo.errorReason());
-      }
+  // Set emergency status flag
+  emergencyStatus = true;
+  
+  if (DEBUG_MODE) {
+    Serial.println("EMERGENCY: " + message);
+  }
+  
+  // Update Firebase with emergency status
+  if (firebaseConnected) {
+    FirebaseJson json;
+    json.set("type", "emergency");
+    json.set("message", message);
+    json.set("temperature", temperature);
+    json.set("timestamp/.sv", "timestamp");
+    
+    if (Firebase.pushJSON(fbdo, "events/" + deviceID, json)) {
+      Serial.println("Emergency event recorded in Firebase");
+    } else {
+      Serial.println("Failed to record emergency event");
+      Serial.println(fbdo.errorReason());
     }
   }
 }
 
 void handleWarning(String message) {
-  if (message == "HIGH_TEMP") {
-    // Update Firebase with warning status
-    if (Firebase.ready()) {
-      FirebaseJson json;
-      
-      json.set("type", "warning");
-      json.set("message", "High temperature warning");
-      json.set("temperature", temperature);
-      json.set("timestamp/.sv", "timestamp");
-      
-      if (Firebase.pushJSON(fbdo, "smart_plugs/" + deviceID + "/events", json)) {
-        Serial.println("Warning event recorded in Firebase");
-      } else {
-        Serial.println("Failed to record warning event");
-        Serial.println(fbdo.errorReason());
-      }
+  if (DEBUG_MODE) {
+    Serial.println("WARNING: " + message);
+  }
+  
+  // Update Firebase with warning status
+  if (firebaseConnected) {
+    FirebaseJson json;
+    json.set("type", "warning");
+    json.set("message", message);
+    json.set("temperature", temperature);
+    json.set("timestamp/.sv", "timestamp");
+    
+    if (Firebase.pushJSON(fbdo, "events/" + deviceID, json)) {
+      Serial.println("Warning event recorded in Firebase");
+    } else {
+      Serial.println("Failed to record warning event");
+      Serial.println(fbdo.errorReason());
+    }
+  }
+}
+
+void handleInfo(String message) {
+  if (DEBUG_MODE) {
+    Serial.println("INFO: " + message);
+  }
+  
+  // Reset emergency status if it was temperature related
+  if (message == "TEMP_NORMAL") {
+    emergencyStatus = false;
+  }
+  
+  // Update Firebase with info status
+  if (firebaseConnected) {
+    FirebaseJson json;
+    json.set("type", "info");
+    json.set("message", message);
+    json.set("temperature", temperature);
+    json.set("timestamp/.sv", "timestamp");
+    
+    if (Firebase.pushJSON(fbdo, "events/" + deviceID, json)) {
+      Serial.println("Info event recorded in Firebase");
+    } else {
+      Serial.println("Failed to record info event");
+      Serial.println(fbdo.errorReason());
     }
   }
 }
@@ -581,24 +641,34 @@ void handleConnectionLost() {
 }
 
 void updateFirebase() {
-  if (Firebase.ready()) {
-    FirebaseJson json;
-    
-    json.set("current", current);
-    json.set("power", power);
-    json.set("temperature", temperature);
-    json.set("relayState", relayState);
-    json.set("deviceState", deviceState);
-    json.set("rssi", WiFi.RSSI());
-    json.set("timestamp/.sv", "timestamp");
-    
-    if (Firebase.updateNode(fbdo, "smart_plugs/" + deviceID, json)) {
-      Serial.println("Data updated in Firebase");
-      reconnectAttempts = 0; // Reset reconnect attempts after successful update
-    } else {
-      Serial.println("Failed to update data");
-      Serial.println(fbdo.errorReason());
+  if (!firebaseConnected) {
+    return;
+  }
+  
+  // Update session uptime
+  unsigned long currentMillis = millis();
+  sessionUptime += (currentMillis - uptimeLastCheck) / 1000;
+  uptimeLastCheck = currentMillis;
+  
+  FirebaseJson json;
+  json.set("current", current);
+  json.set("power", power);
+  json.set("temperature", temperature);
+  json.set("relayState", relayState);
+  json.set("deviceState", deviceState);
+  json.set("emergencyStatus", emergencyStatus);
+  json.set("uptime", sessionUptime);
+  json.set("timestamp/.sv", "timestamp");
+  json.set("ipAddress", WiFi.localIP().toString());
+  json.set("rssi", WiFi.RSSI());
+  
+  if (Firebase.updateNode(fbdo, "devices/" + deviceID + "/status", json)) {
+    reconnectAttempts = 0; // Reset reconnect attempts after successful update
+    if (DEBUG_MODE) {
+      Serial.println("Firebase update successful");
     }
+  } else {
+    Serial.println("Firebase update failed: " + fbdo.errorReason());
   }
 }
 

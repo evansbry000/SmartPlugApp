@@ -14,6 +14,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _useCelsius = true;
   bool _temperatureWarning = true;
   bool _temperatureShutoff = true;
+  bool _currentShutoff = true;
   bool _deviceStateChange = true;
   bool _connectionLost = true;
 
@@ -29,6 +30,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _useCelsius = prefs.getBool('useCelsius') ?? true;
       _temperatureWarning = prefs.getBool('temperatureWarning') ?? true;
       _temperatureShutoff = prefs.getBool('temperatureShutoff') ?? true;
+      _currentShutoff = prefs.getBool('currentShutoff') ?? true;
       _deviceStateChange = prefs.getBool('deviceStateChange') ?? true;
       _connectionLost = prefs.getBool('connectionLost') ?? true;
     });
@@ -39,6 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setBool('useCelsius', _useCelsius);
     await prefs.setBool('temperatureWarning', _temperatureWarning);
     await prefs.setBool('temperatureShutoff', _temperatureShutoff);
+    await prefs.setBool('currentShutoff', _currentShutoff);
     await prefs.setBool('deviceStateChange', _deviceStateChange);
     await prefs.setBool('connectionLost', _connectionLost);
 
@@ -47,6 +50,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await service.updateNotificationPreferences(
       temperatureWarning: _temperatureWarning,
       temperatureShutoff: _temperatureShutoff,
+      currentShutoff: _currentShutoff,
       deviceStateChange: _deviceStateChange,
       connectionLost: _connectionLost,
     );
@@ -81,7 +85,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             'Notifications',
             [
               SwitchListTile(
-                title: const Text('Temperature Warning (35°C)'),
+                title: const Text('Temperature Warning (80°C)'),
                 subtitle: const Text('Get notified when temperature is high'),
                 value: _temperatureWarning,
                 onChanged: (value) {
@@ -92,12 +96,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 },
               ),
               SwitchListTile(
-                title: const Text('Temperature Shutoff (45°C)'),
-                subtitle: const Text('Get notified when device shuts off due to high temperature'),
+                title: const Text('Temperature Auto-shutoff (80°C)'),
+                subtitle: const Text('Automatically turn off device when temperature is too high'),
                 value: _temperatureShutoff,
                 onChanged: (value) {
                   setState(() {
                     _temperatureShutoff = value;
+                  });
+                  _saveSettings();
+                },
+              ),
+              SwitchListTile(
+                title: const Text('Current Auto-shutoff (15A)'),
+                subtitle: const Text('Automatically turn off device when current is too high'),
+                value: _currentShutoff,
+                onChanged: (value) {
+                  setState(() {
+                    _currentShutoff = value;
                   });
                   _saveSettings();
                 },

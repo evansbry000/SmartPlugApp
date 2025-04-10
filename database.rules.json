@@ -1,0 +1,26 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "devices": {
+      "$deviceId": {
+        // Allow read/write access to device data without authentication
+        // This is necessary for ESP32/ESP8266 devices
+        ".read": true,
+        ".write": true
+      }
+    },
+    "events": {
+      "$eventId": {
+        // Allow read/write access to events without authentication
+        ".read": true,
+        ".write": true
+      }
+    },
+    "test": {
+      // Allow test node to be accessed without authentication
+      ".read": true,
+      ".write": true
+    }
+  }
+} 
