@@ -1,166 +1,111 @@
-# Smart Plug App
+# Smart Plug System
 
-A comprehensive IoT solution for monitoring and controlling smart plugs, with real-time data collection, power monitoring, and temperature safety features.
+A complete IoT system for monitoring and controlling electrical devices using smart plugs. This project includes custom firmware for ESP8266/ESP32/Arduino R4 hardware and a Flutter mobile application that communicates through Firebase.
 
 ## Project Components
 
-1. **Hardware**
-   - Arduino R4 WiFi board with temperature and current sensors
-   - Relay module for power control
+### 📱 Mobile App
 
-2. **Firmware**
-   - Arduino R4 firmware for sensor readings, power control and WiFi connectivity
-   - Firebase integration for direct cloud communication
+A Flutter-based mobile application that allows users to:
+- Monitor power consumption and temperature in real-time
+- Control connected devices remotely
+- Set timers and schedules for automated control
+- Receive alerts for critical events
+- View historical usage data and analytics
 
-3. **Cloud Infrastructure**
-   - Firebase Realtime Database for real-time data
-   - Firestore for historical data storage
-   - Firebase Cloud Functions for data mirroring and processing
-   - Firebase Hosting for web application
+[Learn more about the Mobile App](mobile_app/README.md)
 
-4. **Mobile App**
-   - Flutter web application
-   - Real-time monitoring
-   - Historical data visualization
-   - Device control
-   - Notifications
+### ⚡ Firmware
 
-## Data Flow
+Firmware for ESP8266, ESP32, or Arduino R4 WiFi boards that:
+- Measures voltage, current, power consumption, and temperature
+- Controls connected devices via relay
+- Implements safety features (overcurrent protection, temperature monitoring)
+- Communicates with Firebase in real-time
+- Operates with basic functionality even when offline
 
-1. Arduino R4 reads sensor data (current, power, temperature) and controls relay
-2. Arduino R4's built-in WiFi connects directly to Firebase Realtime Database
-3. Cloud Functions mirror data from RTDB to Firestore (every 2 minutes for historical data)
-4. Mobile app reads real-time data from RTDB and historical data from Firestore
+[Learn more about the Firmware](firmware/README.md)
 
-## Data Structure
+### 🔌 Hardware
 
-### Realtime Database
+Circuit designs and schematics for building your own smart plug with:
+- Current and voltage sensing
+- Temperature monitoring
+- Relay control
+- WiFi connectivity
+- Safety features
 
-```
-devices/
-  plug1/
-    status/
-      current: 0.0          # Current in Amperes
-      power: 0.0            # Power in Watts
-      temperature: 25.0     # Temperature in Celsius
-      relayState: false     # Whether the relay is on or off
-      deviceState: 0        # 0=OFF, 1=IDLE, 2=RUNNING
-      emergencyStatus: false # Whether there's an emergency condition
-      uptime: 3600          # Session uptime in seconds
-      timestamp: ServerTimestamp
-    commands/
-      relay: { state: false, processed: true, timestamp: ServerTimestamp }
-    events/
-      -LxYz.../
-        type: "emergency"  # Type can be "emergency", "warning", or "info"
-        message: "HIGH_TEMP"
-        temperature: 45.0
-        timestamp: ServerTimestamp
-```
+See the `firmware/schematic/` directory for hardware design files.
 
-### Firestore Database
+## System Architecture
 
-```
-smart_plugs/
-  plug1/
-    current: 0.0
-    power: 0.0
-    temperature: 25.0
-    relayState: false
-    deviceState: 0
-    emergencyStatus: false
-    uptime: 3600
-    timestamp: Timestamp
-    history/
-      readings/
-        -LxYz.../
-          current: 0.0
-          power: 0.0
-          temperature: 25.0
-          relayState: false
-          deviceState: 0
-          emergencyStatus: false
-          uptime: 3600
-          timestamp: Timestamp
-      events/
-        -LxYz.../
-          type: "emergency"
-          message: "HIGH_TEMP"
-          temperature: 45.0
-          timestamp: Timestamp
-```
+![Smart Plug System Architecture](docs/images/system_architecture.png)
 
-## Data Retention Policy
+1. **Smart Plug Hardware**: Physical devices with sensors and relay
+2. **Firmware**: Code running on the microcontrollers
+3. **Firebase Backend**: Cloud infrastructure for data storage and synchronization
+4. **Mobile Application**: User interface for monitoring and control
 
-Historical data is managed with the following retention periods:
-- Detailed readings: 7 days
-- Hourly averages: 30 days
-- Daily averages: 1 year
+## Getting Started
 
-## Firebase Configuration
+### Prerequisites
 
-The project uses the following Firebase configuration files:
+- Arduino IDE (for firmware development)
+- Flutter SDK (for mobile app development)
+- Firebase account
+- Hardware components (see BOM in the hardware directory)
 
-- **firebase.json**: Main configuration file for Firebase tools
-- **firestore.rules**: Security rules for Firestore
-- **firestore.indexes.json**: Indexes for Firestore queries
-- **database.rules.json**: Security rules for Realtime Database
-- **.firebaserc**: Project configuration
+### Setup Instructions
 
-## Setup Instructions
-
-### Hardware Setup
-
-1. Connect current sensor to Arduino R4 analog pin A0
-2. Connect temperature sensor to Arduino R4 analog pin A1
-3. Connect relay module to Arduino R4 digital pin D7
-4. Power up the system
-
-### Firmware Setup
-
-1. Configure your WiFi credentials in the Arduino R4 sketch
-2. Upload `arduinor4full.ino` to Arduino R4
-3. Monitor serial output for connection status
-
-### Cloud Functions Setup
-
-1. Install Firebase CLI: `npm install -g firebase-tools`
-2. Login to Firebase: `firebase login`
-3. Navigate to root directory
-4. Deploy Firebase configuration:
-   ```bash
-   firebase deploy
+1. **Clone the repository**
+   ```
+   git clone https://github.com/your-username/SmartPlugApp.git
+   cd SmartPlugApp
    ```
 
-### Mobile App Setup
+2. **Set up Firebase**
+   - Create a new Firebase project
+   - Enable Authentication, Realtime Database, and Firestore
+   - Configure security rules
+   - Add the appropriate config files to the mobile app
 
-1. Navigate to `mobile_app` directory
-2. Install dependencies: `flutter pub get`
-3. Build the web app:
-   ```bash
-   flutter build web
-   ```
-4. Deploy to Firebase Hosting:
-   ```bash
-   cd ..
-   firebase deploy --only hosting
-   ```
+3. **Firmware Setup**
+   - Choose your hardware platform (ESP8266, ESP32, or Arduino R4)
+   - Follow the instructions in the [firmware README](firmware/README.md)
+   - Configure WiFi and Firebase credentials
+   - Upload the firmware to your device
 
-## Authentication
+4. **Mobile App Setup**
+   - Follow the instructions in the [mobile app README](mobile_app/README.md)
+   - Configure the Firebase connection
+   - Build and install the app on your device
 
-### Mobile App
-- Uses Email/Password authentication
-- Configure this in the Firebase Console > Authentication > Sign-in method
-- Add test users as needed
+5. **Test the System**
+   - Verify that the hardware connects to Firebase
+   - Confirm that the mobile app can read data and send commands
+   - Test safety features and automation capabilities
 
-### Arduino R4
-- Uses Legacy Database Secret for authentication
-- No additional setup required, already configured in the firmware
+## Key Features
 
-## Screenshots
+- **Real-time Monitoring**: View power usage and device status in real-time
+- **Remote Control**: Turn devices on/off from anywhere
+- **Energy Analytics**: Track usage patterns and identify energy-saving opportunities
+- **Scheduling & Automation**: Set timers and recurring schedules
+- **Safety Features**: Automatic shutoff for overcurrent or overtemperature conditions
+- **Multi-user Access**: Share device control with family members
+- **Offline Operation**: Basic functionality continues when internet is unavailable
+- **Cross-platform Support**: Works on iOS and Android devices
 
-*[Insert screenshots of the app here]*
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-*[Insert license information here]*
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Firebase for providing the backend infrastructure
+- Flutter team for the excellent cross-platform framework
+- Arduino community for hardware and library support

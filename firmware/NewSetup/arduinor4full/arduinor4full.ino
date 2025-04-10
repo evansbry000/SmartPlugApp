@@ -114,7 +114,7 @@ void setup() {
   Serial.println("\nArduino R4 WiFi - Smart Plug Starting...");
   
   // Initialize EEPROM and load saved configuration
-  EEPROM.begin(EEPROM_SIZE);
+  EEPROM.begin(); // No size parameter needed for Arduino R4
   loadConfigFromEEPROM();
   
   // Initialize hardware pins
@@ -251,12 +251,19 @@ bool checkCommands(void *) {
     return true;  // Skip if no WiFi connection
   }
   
+  // Check for valid IP
+  IPAddress ip = WiFi.localIP();
+  if (ip[0] == 0) {
+    return true;
+  }
+  
   // Path for relay commands
   String path = "/devices/" + String(DEVICE_ID) + "/commands/relay.json";
   path += "?auth=" + String(FIREBASE_API_KEY);
   
   // Send HTTP GET request
   httpClient.connectionKeepAlive(); // Keep connection open
+  httpClient.setTimeout(15000);     // 15 second timeout
   
   httpClient.beginRequest();
   httpClient.get(path);
@@ -309,6 +316,9 @@ bool checkCommands(void *) {
         }
       }
     }
+  } else if (statusCode != 200) {
+    Serial.print("Command check failed with code: ");
+    Serial.println(statusCode);
   }
   
   return true;
@@ -316,7 +326,15 @@ bool checkCommands(void *) {
 
 bool updateStatus(void *) {
   if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Status update skipped: WiFi not connected");
     return true;  // Skip if no WiFi connection
+  }
+  
+  // Check for valid IP
+  IPAddress ip = WiFi.localIP();
+  if (ip[0] == 0) {
+    Serial.println("Status update skipped: Invalid IP address");
+    return true;
   }
   
   // Create JSON payload
@@ -345,6 +363,7 @@ bool updateStatus(void *) {
   
   // Send HTTP PUT request
   httpClient.connectionKeepAlive(); // Keep connection open
+  httpClient.setTimeout(15000);     // 15 second timeout
   
   httpClient.beginRequest();
   httpClient.put(path);
@@ -362,6 +381,20 @@ bool updateStatus(void *) {
   } else {
     Serial.print("Status update failed with code: ");
     Serial.println(statusCode);
+    
+    // If we're getting auth errors repeatedly, try resetting the connection
+    if (statusCode == 401) {
+      static int authErrorCount = 0;
+      authErrorCount++;
+      
+      if (authErrorCount >= 3) {
+        Serial.println("Multiple authorization errors. Resetting connection...");
+        WiFi.disconnect();
+        delay(1000);
+        connectToWiFi();
+        authErrorCount = 0;
+      }
+    }
   }
   
   return true;
@@ -445,15 +478,24 @@ void connectToWiFi() {
   
   // Wait for connection (with timeout)
   unsigned long startAttemptTime = millis();
-  while (WiFi.status() != WL_CONNECTED && 
-         millis() - startAttemptTime < 20000) {
+  bool connected = false;
+  
+  while (millis() - startAttemptTime < 30000) { // 30 second timeout
+    if (WiFi.status() == WL_CONNECTED) {
+      IPAddress ip = WiFi.localIP();
+      // Check if we have a valid IP address (not 0.0.0.0)
+      if (ip[0] != 0) {
+        connected = true;
+        break;
+      }
+    }
     Serial.print(".");
     digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));  // Toggle LED
     delay(500);
   }
   
   // Check connection status
-  if (WiFi.status() == WL_CONNECTED) {
+  if (connected) {
     Serial.println();
     Serial.print("Connected! IP address: ");
     Serial.println(WiFi.localIP());
@@ -461,9 +503,12 @@ void connectToWiFi() {
     // Synchronize time
     Serial.println("Synchronizing time...");
     configTime();
+    
+    // Delay before first Firebase connection to ensure network is stable
+    delay(2000);
   } else {
     Serial.println();
-    Serial.println("Failed to connect to WiFi. Will retry later.");
+    Serial.println("Failed to connect to WiFi or obtain valid IP. Will retry later.");
   }
 }
 
@@ -493,7 +538,15 @@ void processRelay(bool state) {
 
 void sendEventToFirebase(const char* eventType, const char* message) {
   if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Cannot send event: WiFi not connected");
     return;  // Skip if no WiFi connection
+  }
+  
+  // Check for valid IP
+  IPAddress ip = WiFi.localIP();
+  if (ip[0] == 0) {
+    Serial.println("Cannot send event: Invalid IP address");
+    return;
   }
   
   // Create JSON for the event
@@ -520,6 +573,7 @@ void sendEventToFirebase(const char* eventType, const char* message) {
   
   // Use HTTP POST for events
   httpClient.connectionKeepAlive(); // Keep connection open
+  httpClient.setTimeout(15000);     // 15 second timeout
   
   httpClient.beginRequest();
   httpClient.post(path);
@@ -537,6 +591,9 @@ void sendEventToFirebase(const char* eventType, const char* message) {
     Serial.print(eventType);
     Serial.print(" - ");
     Serial.println(message);
+  } else {
+    Serial.print("Event send failed with code: ");
+    Serial.println(statusCode);
   }
 }
 

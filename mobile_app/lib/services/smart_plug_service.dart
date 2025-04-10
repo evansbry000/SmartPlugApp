@@ -5,6 +5,11 @@ import 'package:firebase_database/firebase_database.dart';
 import 'dart:async';
 import 'package:intl/intl.dart';
 import '../models/smart_plug_data.dart';
+import 'device_data_service.dart';
+import 'event_service.dart';
+import 'data_mirroring_service.dart';
+import 'notification_service.dart';
+import '../models/smart_plug_event.dart';
 
 enum DeviceState {
   off,
@@ -119,721 +124,234 @@ class SmartPlugEvent {
   }
 }
 
-class SmartPlugService with ChangeNotifier {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseDatabase _rtdb = FirebaseDatabase.instance;
+/// Main coordinator service for SmartPlug functionality
+class SmartPlugService {
+  // Service instances
+  final DeviceDataService _deviceDataService = DeviceDataService();
+  final EventService _eventService = EventService();
+  final NotificationService _notificationService = NotificationService();
+  final DataMirroringService _dataMirroringService = DataMirroringService();
   final FirebaseAuth _auth = FirebaseAuth.instance;
   
-  SmartPlugData? _currentData;
-  List<SmartPlugEvent> _recentEvents = [];
-  bool _isLoading = false;
-  StreamSubscription? _dataSubscription;
-  StreamSubscription? _eventsSubscription;
-  Timer? _historyTimer;
-  Timer? _connectionCheckTimer;
-  DateTime? _lastDataTimestamp;
-  bool _isDeviceConnected = true;
+  // Authentication state 
+  User? _currentUser;
+  StreamSubscription? _authSubscription;
   
-  // Constants for data management
-  static const String DEVICE_ID = 'plug1';
-  static const Duration HISTORY_INTERVAL = Duration(minutes: 2);
-  static const Duration CONNECTION_CHECK_INTERVAL = Duration(minutes: 1);
-  static const Duration STALE_DATA_THRESHOLD = Duration(minutes: 5);
-  static const int HISTORY_RETENTION_DAYS = 7;
-  // Thresholds for emergency conditions
-  static const double HIGH_TEMPERATURE_THRESHOLD = 80.0; // Celsius
-  static const double HIGH_CURRENT_THRESHOLD = 15.0; // Amperes
-
-  SmartPlugData? get currentData => _currentData;
-  List<SmartPlugEvent> get recentEvents => _recentEvents;
-  bool get isLoading => _isLoading;
-  bool get isDeviceConnected => _isDeviceConnected;
-
-  SmartPlugService() {
-    // Initialize after a short delay to ensure Firebase Auth is ready
-    Future.delayed(Duration.zero, () {
-      final user = _auth.currentUser;
-      if (user != null) {
-        _startListening();
-      }
-    });
-
-    _auth.authStateChanges().listen((User? user) {
-      if (user != null) {
-        _startListening();
-      } else {
-        _stopListening();
-      }
-    });
-  }
-
-  void _startListening() {
-    final user = _auth.currentUser;
-    if (user == null) {
-      print('No authenticated user found');
-      return;
-    }
-
-    print('Starting data listeners for user: ${user.uid}');
-    
-    // Listen to current data from RTDB
-    _dataSubscription = _rtdb
-        .ref('devices/$DEVICE_ID/status')
-        .onValue
-        .listen(
-          (event) {
-            if (event.snapshot.exists) {
-              print('Received smart plug data update from RTDB');
-              final data = Map<dynamic, dynamic>.from(
-                  event.snapshot.value as Map<dynamic, dynamic>);
-              
-              _currentData = SmartPlugData.fromRTDB(data);
-              
-              // Update the last data timestamp
-              _lastDataTimestamp = DateTime.now();
-              
-              // If the device was previously disconnected, mark it as connected and notify
-              if (!_isDeviceConnected) {
-                _isDeviceConnected = true;
-                
-                // Create a connection event
-                final connectionEvent = SmartPlugEvent(
-                  type: 'connection',
-                  message: 'CONNECTED',
-                  timestamp: DateTime.now(),
-                );
-                
-                // Mirror the event to Firestore
-                _mirrorEventToFirestore(connectionEvent);
-                
-                notifyListeners();
-              }
-              
-              // Check for emergency conditions and handle them
-              _handleEmergencyConditions(_currentData!);
-              
-              // Mirror current data to Firestore
-              _mirrorCurrentDataToFirestore(_currentData!);
-              
-              notifyListeners();
-            } else {
-              print('No smart plug data found in RTDB');
-            }
-          },
-          onError: (error) {
-            print('Error listening to RTDB smart plug data: $error');
-          },
-        );
-
-    // Listen to events from RTDB
-    _eventsSubscription = _rtdb
-        .ref('events/$DEVICE_ID')
-        .onChildAdded
-        .listen(
-          (event) {
-            print('Received new event from RTDB');
-            if (event.snapshot.exists) {
-              final data = Map<dynamic, dynamic>.from(
-                  event.snapshot.value as Map<dynamic, dynamic>);
-              
-              final newEvent = SmartPlugEvent.fromRTDB(data);
-              
-              // Mirror event to Firestore
-              _mirrorEventToFirestore(newEvent);
-              
-              // Update local events list
-              _recentEvents.insert(0, newEvent);
-              if (_recentEvents.length > 10) {
-                _recentEvents = _recentEvents.sublist(0, 10);
-              }
-              
-              notifyListeners();
-            }
-          },
-          onError: (error) {
-            print('Error listening to RTDB events: $error');
-          },
-        );
-        
-    // Start historical data timer (every 2 minutes)
-    _historyTimer = Timer.periodic(HISTORY_INTERVAL, (timer) {
-      if (_currentData != null) {
-        _recordHistoricalData(_currentData!);
-      }
-      
-      // Once a day, clean up old data
-      final now = DateTime.now();
-      if (now.hour == 0 && now.minute < 2) {
-        _cleanupHistoricalData();
-      }
-    });
-    
-    // Start connection check timer (every minute)
-    _connectionCheckTimer = Timer.periodic(CONNECTION_CHECK_INTERVAL, (timer) {
-      _checkForStaleData();
-    });
-  }
-
-  void _stopListening() {
-    _dataSubscription?.cancel();
-    _eventsSubscription?.cancel();
-    _historyTimer?.cancel();
-    _connectionCheckTimer?.cancel();
-    _currentData = null;
-    _recentEvents = [];
-    _isDeviceConnected = true;
-    notifyListeners();
-  }
+  // Active device tracking
+  String? _activeDeviceId;
+  final List<String> _monitoredDevices = [];
   
-  // Check if data is stale (no updates for 5+ minutes)
-  void _checkForStaleData() {
-    if (_lastDataTimestamp == null) return;
-    
-    final now = DateTime.now();
-    final timeSinceLastUpdate = now.difference(_lastDataTimestamp!);
-    
-    if (timeSinceLastUpdate > STALE_DATA_THRESHOLD && _isDeviceConnected) {
-      // Data is stale, device might be disconnected
-      _isDeviceConnected = false;
-      
-      // Create a disconnection event
-      final disconnectionEvent = SmartPlugEvent(
-        type: 'connection',
-        message: 'DISCONNECTED',
-        timestamp: now,
-      );
-      
-      // Mirror the event to Firestore
-      _mirrorEventToFirestore(disconnectionEvent);
-      
-      notifyListeners();
-      
-      print('Device appears to be disconnected - no data for ${timeSinceLastUpdate.inMinutes} minutes');
-    }
-  }
+  // State tracking
+  bool _isInitialized = false;
+
+  // Stream controllers
+  final _deviceListController = StreamController<List<String>>.broadcast();
   
-  // Handle emergency conditions like high temperature or current
-  void _handleEmergencyConditions(SmartPlugData data) async {
-    // Check for emergency conditions
-    bool isEmergency = false;
-    String emergencyType = '';
-    String emergencyMessage = '';
-    
-    // Check for high temperature
-    if (data.temperature >= HIGH_TEMPERATURE_THRESHOLD) {
-      isEmergency = true;
-      emergencyType = 'emergency';
-      emergencyMessage = 'HIGH_TEMPERATURE';
-      
-      // Only create a new emergency event if the current data doesn't already have emergencyStatus set
-      if (!data.emergencyStatus) {
-        // Create an emergency event
-        final event = SmartPlugEvent(
-          type: emergencyType,
-          message: emergencyMessage,
-          temperature: data.temperature,
-          timestamp: data.timestamp,
-        );
-        
-        // Record the event in Firestore
-        await _mirrorEventToFirestore(event);
-        
-        // If configured, automatically turn off the device in emergency
-        await _checkAndApplyAutoSafety(data);
-      }
-    }
-    
-    // Check for high current
-    if (data.current >= HIGH_CURRENT_THRESHOLD) {
-      isEmergency = true;
-      emergencyType = 'emergency';
-      emergencyMessage = 'HIGH_CURRENT';
-      
-      // Only create a new emergency event if the current data doesn't already have emergencyStatus set
-      if (!data.emergencyStatus) {
-        // Create an emergency event
-        final event = SmartPlugEvent(
-          type: emergencyType,
-          message: emergencyMessage,
-          temperature: data.temperature,
-          timestamp: data.timestamp,
-        );
-        
-        // Record the event in Firestore
-        await _mirrorEventToFirestore(event);
-        
-        // If configured, automatically turn off the device in emergency
-        await _checkAndApplyAutoSafety(data);
-      }
-    }
-    
-    // If we detected an emergency condition but the status doesn't reflect it,
-    // update the emergency status in RTDB
-    if (isEmergency && !data.emergencyStatus) {
-      try {
-        await _rtdb
-            .ref('devices/$DEVICE_ID/status/emergencyStatus')
-            .set(true);
-      } catch (e) {
-        print('Error updating emergency status in RTDB: $e');
-      }
-    }
-    
-    // If there's no emergency but status indicates one, clear it
-    if (!isEmergency && data.emergencyStatus) {
-      try {
-        await _rtdb
-            .ref('devices/$DEVICE_ID/status/emergencyStatus')
-            .set(false);
-      } catch (e) {
-        print('Error clearing emergency status in RTDB: $e');
-      }
-    }
-  }
+  // Public accessors
+  Stream<Map<String, SmartPlugData>> get deviceDataStream => _deviceDataService.deviceDataStream;
+  Stream<Map<String, bool>> get deviceConnectionStream => _deviceDataService.deviceConnectionStream;
+  Stream<List<String>> get deviceListStream => _deviceListController.stream;
   
-  // Check user preferences and apply automatic safety measures if configured
-  Future<void> _checkAndApplyAutoSafety(SmartPlugData data) async {
+  /// Initialize the service and all child services
+  Future<void> initialize() async {
+    if (_isInitialized) return;
+    
     try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return;
+      // Initialize all services
+      _deviceDataService.initialize();
+      _eventService.initialize();
+      await _notificationService.initialize();
       
-      // Get user preferences
-      final prefsDoc = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('notifications')
-          .doc('preferences')
-          .get();
-          
-      if (!prefsDoc.exists) return;
+      // Listen for authentication state changes
+      _authSubscription = _auth.authStateChanges().listen(_handleAuthChange);
       
-      final prefs = prefsDoc.data()!;
-      
-      // If temperature shutoff is enabled, turn off the relay
-      if (prefs['temperatureShutoff'] == true && 
-          data.temperature >= HIGH_TEMPERATURE_THRESHOLD && 
-          data.relayState) {
-        // Turn off the device
-        await toggleRelay(false);
-        
-        // Record an event about automatic shutoff
-        final event = SmartPlugEvent(
-          type: 'safety',
-          message: 'AUTO_SHUTOFF_TEMPERATURE',
-          temperature: data.temperature,
-          timestamp: DateTime.now(),
-        );
-        
-        await _mirrorEventToFirestore(event);
+      // Get current user
+      _currentUser = _auth.currentUser;
+      if (_currentUser != null) {
+        await _loadUserDevices();
       }
       
-      // If current shutoff is enabled, turn off the relay for high current
-      if (prefs['currentShutoff'] == true && 
-          data.current >= HIGH_CURRENT_THRESHOLD && 
-          data.relayState) {
-        // Turn off the device
-        await toggleRelay(false);
-        
-        // Record an event about automatic shutoff
-        final event = SmartPlugEvent(
-          type: 'safety',
-          message: 'AUTO_SHUTOFF_CURRENT',
-          temperature: data.temperature,
-          timestamp: DateTime.now(),
-        );
-        
-        await _mirrorEventToFirestore(event);
+      _isInitialized = true;
+      debugPrint('SmartPlugService initialized successfully');
+    } catch (e) {
+      debugPrint('Error initializing SmartPlugService: $e');
+    }
+  }
+
+  /// Handle authentication state changes
+  void _handleAuthChange(User? user) {
+    _currentUser = user;
+    
+    if (user != null) {
+      // User signed in, load devices
+      _loadUserDevices();
+    } else {
+      // User signed out, clear devices
+      _monitoredDevices.clear();
+      _deviceListController.add([]);
+      _activeDeviceId = null;
+    }
+  }
+  
+  /// Load user devices from Firestore
+  Future<void> _loadUserDevices() async {
+    final userId = _currentUser?.uid;
+    if (userId == null) return;
+    
+    try {
+      // Get devices from Firestore
+      // For now, just using a stub implementation
+      // In a real implementation, this would load from Firestore
+      
+      // Start monitoring devices
+      final devices = ['device1', 'device2']; // Placeholder
+      _monitoredDevices.clear();
+      _monitoredDevices.addAll(devices);
+      
+      // Notify listeners
+      _deviceListController.add(_monitoredDevices);
+      
+      // Start monitoring each device
+      for (final deviceId in devices) {
+        await startMonitoringDevice(deviceId);
+      }
+      
+      // Set active device to first device if none is set
+      if (_activeDeviceId == null && devices.isNotEmpty) {
+        setActiveDevice(devices.first);
       }
     } catch (e) {
-      print('Error in auto safety check: $e');
+      debugPrint('Error loading user devices: $e');
     }
   }
   
-  // Mirror current data from RTDB to Firestore
-  Future<void> _mirrorCurrentDataToFirestore(SmartPlugData data) async {
-    try {
-      // Create a proper Firestore-compatible map from the data
-      final firestoreData = data.toMap();
-      
-      // Convert timestamp to Firestore timestamp if needed
-      if (firestoreData['timestamp'] is DateTime) {
-        firestoreData['timestamp'] = Timestamp.fromDate(firestoreData['timestamp'] as DateTime);
-      } else if (firestoreData['timestamp'] is int) {
-        firestoreData['timestamp'] = Timestamp.fromDate(
-            DateTime.fromMillisecondsSinceEpoch(firestoreData['timestamp'] as int));
-      }
-      
-      await _firestore
-          .collection('smart_plugs')
-          .doc(DEVICE_ID)
-          .set(firestoreData);
-      
-      print('Current data mirrored to Firestore');
-    } catch (e) {
-      print('Error mirroring current data to Firestore: $e');
+  /// Start monitoring a device
+  Future<void> startMonitoringDevice(String deviceId) async {
+    // Start listening to device data
+    await _deviceDataService.startListeningToDevice(deviceId);
+    
+    // Add to monitored devices if not already there
+    if (!_monitoredDevices.contains(deviceId)) {
+      _monitoredDevices.add(deviceId);
+      _deviceListController.add(_monitoredDevices);
     }
   }
   
-  // Mirror event from RTDB to Firestore
-  Future<void> _mirrorEventToFirestore(SmartPlugEvent event) async {
-    try {
-      // Create a proper Firestore-compatible map from the event
-      final firestoreData = event.toMap();
-      
-      // Convert timestamp to Firestore timestamp if needed
-      if (firestoreData['timestamp'] is DateTime) {
-        firestoreData['timestamp'] = Timestamp.fromDate(firestoreData['timestamp'] as DateTime);
-      } else if (firestoreData['timestamp'] is int) {
-        firestoreData['timestamp'] = Timestamp.fromDate(
-            DateTime.fromMillisecondsSinceEpoch(firestoreData['timestamp'] as int));
-      }
-      
-      // Add the event to Firestore
-      final docRef = await _firestore
-          .collection('smart_plugs')
-          .doc(DEVICE_ID)
-          .collection('events')
-          .add(firestoreData);
-      
-      print('Event mirrored to Firestore with ID: ${docRef.id}');
-      
-      // Check if we need to send a notification to the user about this event
-      await _checkAndSendNotification(event);
-    } catch (e) {
-      print('Error mirroring event to Firestore: $e');
+  /// Stop monitoring a device
+  Future<void> stopMonitoringDevice(String deviceId) async {
+    // TODO: Implement stopping device monitoring
+    // This would require changes to DeviceDataService 
+    
+    // Remove from monitored devices
+    _monitoredDevices.remove(deviceId);
+    _deviceListController.add(_monitoredDevices);
+    
+    // If this was the active device, set a new active device
+    if (_activeDeviceId == deviceId) {
+      _activeDeviceId = _monitoredDevices.isNotEmpty ? _monitoredDevices.first : null;
     }
   }
   
-  // Check user preferences and send notifications if configured
-  Future<void> _checkAndSendNotification(SmartPlugEvent event) async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return;
-      
-      // Get user preferences
-      final prefsDoc = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('notifications')
-          .doc('preferences')
-          .get();
-          
-      if (!prefsDoc.exists) return;
-      
-      final prefs = prefsDoc.data()!;
-      
-      // Check if this type of event should trigger a notification
-      bool shouldNotify = false;
-      String notificationTitle = 'Smart Plug Alert';
-      String notificationBody = 'An event occurred with your smart plug.';
-      
-      // Temperature warning
-      if (event.type == 'emergency' && 
-          event.message == 'HIGH_TEMPERATURE' && 
-          prefs['temperatureWarning'] == true) {
-        shouldNotify = true;
-        notificationTitle = 'High Temperature Warning';
-        notificationBody = 'Your device temperature has reached ${event.temperature}°C.';
-      }
-      
-      // Device state change
-      else if (event.type == 'state_change' && 
-          prefs['deviceStateChange'] == true) {
-        shouldNotify = true;
-        notificationTitle = 'Device State Changed';
-        notificationBody = 'Your device changed state: ${event.message}';
-      }
-      
-      // Connection lost
-      else if (event.type == 'connection' && 
-          event.message == 'DISCONNECTED' && 
-          prefs['connectionLost'] == true) {
-        shouldNotify = true;
-        notificationTitle = 'Device Disconnected';
-        notificationBody = 'Your smart plug has disconnected from the network.';
-      }
-      
-      // Auto shutoff
-      else if (event.type == 'safety' && 
-          (event.message == 'AUTO_SHUTOFF_TEMPERATURE' || 
-           event.message == 'AUTO_SHUTOFF_CURRENT')) {
-        shouldNotify = true;
-        notificationTitle = 'Safety Shutoff Activated';
-        notificationBody = event.message == 'AUTO_SHUTOFF_TEMPERATURE' 
-            ? 'Your device was turned off due to high temperature.' 
-            : 'Your device was turned off due to high current.';
-      }
-      
-      // If we should send a notification, record it in Firestore
-      if (shouldNotify) {
-        await _firestore
-            .collection('users')
-            .doc(userId)
-            .collection('notifications')
-            .add({
-              'title': notificationTitle,
-              'body': notificationBody,
-              'read': false,
-              'timestamp': Timestamp.now(),
-              'eventType': event.type,
-              'eventMessage': event.message,
-            });
-            
-        print('Notification added to Firestore for event: ${event.type} - ${event.message}');
-      }
-    } catch (e) {
-      print('Error checking notification preferences: $e');
+  /// Set the active device
+  void setActiveDevice(String deviceId) {
+    if (_activeDeviceId == deviceId) return;
+    
+    _activeDeviceId = deviceId;
+    
+    // Update active device in services
+    _eventService.setDeviceId(deviceId);
+    _notificationService.setDeviceId(deviceId);
+    
+    // Start monitoring if not already
+    if (!_monitoredDevices.contains(deviceId)) {
+      startMonitoringDevice(deviceId);
     }
   }
   
-  // Record historical data to Firestore
-  Future<void> _recordHistoricalData(SmartPlugData data) async {
-    try {
-      // Create a proper Firestore-compatible map from the data
-      final firestoreData = data.toMap();
-      
-      // Convert timestamp to Firestore timestamp if needed
-      if (firestoreData['timestamp'] is DateTime) {
-        firestoreData['timestamp'] = Timestamp.fromDate(firestoreData['timestamp'] as DateTime);
-      } else if (firestoreData['timestamp'] is int) {
-        firestoreData['timestamp'] = Timestamp.fromDate(
-            DateTime.fromMillisecondsSinceEpoch(firestoreData['timestamp'] as int));
-      }
-      
-      // Add the historical record to Firestore
-      final docRef = await _firestore
-          .collection('smart_plugs')
-          .doc(DEVICE_ID)
-          .collection('history')
-          .add(firestoreData);
-      
-      print('Historical data recorded to Firestore with ID: ${docRef.id}');
-    } catch (e) {
-      print('Error recording historical data to Firestore: $e');
-    }
+  /// Get the active device ID
+  String? get activeDeviceId => _activeDeviceId;
+  
+  /// Get data for a specific device
+  SmartPlugData? getDeviceData(String deviceId) {
+    return _deviceDataService.deviceDataCache[deviceId];
   }
   
-  // Clean up historical data older than retention period
-  Future<void> _cleanupHistoricalData() async {
-    try {
-      final cutoffDate = DateTime.now().subtract(Duration(days: HISTORY_RETENTION_DAYS));
-      final timestamp = Timestamp.fromDate(cutoffDate);
-      
-      await _deleteQueryBatch(
-        _firestore.collection('smart_plugs')
-          .doc(DEVICE_ID)
-          .collection('history')
-          .where('timestamp', isLessThan: timestamp)
-          .limit(100)
-      );
-    } catch (e) {
-      print('Error cleaning up historical data: $e');
-    }
+  /// Check if a device is connected
+  bool isDeviceConnected(String deviceId) {
+    return _deviceDataService.deviceConnectionState[deviceId] ?? false;
   }
   
-  // Helper method to delete documents in batches
-  Future<void> _deleteQueryBatch(Query query) async {
-    while (true) {
-      final snapshot = await query.get();
-      
-      // If no documents found, we're done
-      if (snapshot.docs.isEmpty) {
-        break;
-      }
-      
-      // Create a write batch
-      final batch = _firestore.batch();
-      for (var doc in snapshot.docs) {
-        batch.delete(doc.reference);
-      }
-      
-      // Commit the batch
-      await batch.commit();
-      print('Deleted ${snapshot.docs.length} old records');
-    }
+  /// Toggle the relay state for a device
+  Future<bool> toggleRelay(String deviceId, bool state) async {
+    return await _deviceDataService.toggleRelay(deviceId, state);
   }
-
-  Future<void> toggleRelay(bool state) async {
-    try {
-      _isLoading = true;
-      notifyListeners();
-
-      // Send command to RTDB
-      await _rtdb
-          .ref('devices/$DEVICE_ID/commands/relay')
-          .set({
-            'state': state,
-            'processed': false,
-            'timestamp': ServerValue.timestamp,
-          });
-
-      _isLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _isLoading = false;
-      notifyListeners();
-      rethrow;
-    }
+  
+  /// Get events for the active device
+  Stream<List<SmartPlugEvent>> getEventStream(String deviceId) {
+    return _eventService.getEventsStream(deviceId);
   }
-
-  Future<List<SmartPlugData>> getHistoricalData({
-    required DateTime start,
-    required DateTime end,
+  
+  /// Get recent events for a device
+  Future<List<SmartPlugEvent>> getRecentEvents(String deviceId, {int limit = 10}) async {
+    return await _eventService.getRecentEvents(limit: limit);
+  }
+  
+  /// Get events by type
+  Future<List<SmartPlugEvent>> getEventsByType(String deviceId, String eventType) async {
+    return await _eventService.getEventsByType(deviceId, eventType);
+  }
+  
+  /// Acknowledge an event
+  Future<void> acknowledgeEvent(String deviceId, String eventId) async {
+    await _eventService.acknowledgeEvent(eventId);
+  }
+  
+  /// Get historical data for a device
+  Future<List<Map<String, dynamic>>> getHistoricalData(
+    String deviceId, {
+    required DateTime startDate,
+    required DateTime endDate,
   }) async {
-    try {
-      _isLoading = true;
-      notifyListeners();
-
-      // Get historical data from Firestore
-      final snapshot = await _firestore
-          .collection('smart_plugs')
-          .doc(DEVICE_ID)
-          .collection('history')
-          .where('timestamp', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('timestamp', isLessThanOrEqualTo: Timestamp.fromDate(end))
-          .orderBy('timestamp', descending: false)
-          .get();
-
-      final data = snapshot.docs
-          .map((doc) => SmartPlugData.fromFirestore(doc))
-          .toList();
-
-      _isLoading = false;
-      notifyListeners();
-      return data;
-    } catch (e) {
-      _isLoading = false;
-      notifyListeners();
-      rethrow;
-    }
+    return await _dataMirroringService.getHistoricalData(
+      startDate: startDate, 
+      endDate: endDate,
+    );
   }
-
-  Future<void> updateNotificationPreferences({
-    required bool temperatureWarning,
-    required bool temperatureShutoff,
-    required bool currentShutoff,
-    required bool deviceStateChange,
-    required bool connectionLost,
+  
+  /// Update notification preferences
+  Future<bool> updateNotificationPreferences({
+    required bool powerAlerts,
+    required bool connectionAlerts,
+    required double powerThreshold,
   }) async {
-    try {
-      _isLoading = true;
-      notifyListeners();
-
-      final userId = _auth.currentUser?.uid;
-      if (userId != null) {
-        await _firestore
-            .collection('users')
-            .doc(userId)
-            .collection('notifications')
-            .doc('preferences')
-            .set({
-          'temperatureWarning': temperatureWarning,
-          'temperatureShutoff': temperatureShutoff,
-          'currentShutoff': currentShutoff,
-          'deviceStateChange': deviceStateChange,
-          'connectionLost': connectionLost,
-        });
-      }
-
-      _isLoading = false;
-      notifyListeners();
-    } catch (e) {
-      _isLoading = false;
-      notifyListeners();
-      rethrow;
-    }
+    return await _notificationService.updateNotificationPreferences(
+      powerAlerts: powerAlerts,
+      connectionAlerts: connectionAlerts,
+      powerThreshold: powerThreshold,
+    );
   }
   
-  // Get unread notification count
-  Future<int> getUnreadNotificationCount() async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return 0;
-      
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('notifications')
-          .where('read', isEqualTo: false)
-          .count()
-          .get();
-          
-      return snapshot.count;
-    } catch (e) {
-      print('Error getting unread notification count: $e');
-      return 0;
-    }
+  /// Get notification preferences
+  Future<Map<String, dynamic>> getNotificationPreferences() async {
+    return await _notificationService.getNotificationPreferences();
   }
   
-  // Get recent notifications
-  Future<List<Map<String, dynamic>>> getRecentNotifications() async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return [];
-      
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('notifications')
-          .orderBy('timestamp', descending: true)
-          .limit(20)
-          .get();
-          
-      return snapshot.docs.map((doc) {
-        final data = doc.data();
-        data['id'] = doc.id; // Include the document ID
-        return data;
-      }).toList();
-    } catch (e) {
-      print('Error getting recent notifications: $e');
-      return [];
-    }
+  /// Send a test notification
+  Future<bool> sendTestNotification() async {
+    return await _notificationService.sendTestNotification();
   }
   
-  // Mark a notification as read
-  Future<void> markNotificationAsRead(String notificationId) async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return;
-      
-      await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('notifications')
-          .doc(notificationId)
-          .update({'read': true});
-    } catch (e) {
-      print('Error marking notification as read: $e');
-    }
+  /// Get unacknowledged events count
+  Future<int> getUnacknowledgedEventsCount(String deviceId) async {
+    return await _eventService.getUnacknowledgedEventsCount();
   }
   
-  // Mark all notifications as read
-  Future<void> markAllNotificationsAsRead() async {
-    try {
-      final userId = _auth.currentUser?.uid;
-      if (userId == null) return;
-      
-      final snapshot = await _firestore
-          .collection('users')
-          .doc(userId)
-          .collection('notifications')
-          .where('read', isEqualTo: false)
-          .get();
-          
-      final batch = _firestore.batch();
-      for (var doc in snapshot.docs) {
-        batch.update(doc.reference, {'read': true});
-      }
-      
-      await batch.commit();
-    } catch (e) {
-      print('Error marking all notifications as read: $e');
-    }
-  }
-
-  @override
+  /// Dispose resources
   void dispose() {
-    _stopListening();
-    super.dispose();
+    _authSubscription?.cancel();
+    _deviceDataService.dispose();
+    _eventService.dispose();
+    _notificationService.dispose();
+    _deviceListController.close();
   }
 } 

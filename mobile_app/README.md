@@ -1,128 +1,97 @@
-# Smart Plug App - Flutter Web
+# Smart Plug Mobile App
 
-A Flutter web application for monitoring and controlling smart plugs with real-time data visualization and temperature monitoring.
+A Flutter application for monitoring and controlling IoT smart plugs. This app connects to ESP8266/ESP32-based smart plug devices through Firebase and provides real-time monitoring, control, and automation capabilities.
 
 ## Features
 
-- **Authentication**
-  - Email/Password sign up and login
-  - Secure session management
-  - User-specific data access
-
-- **Device Monitoring**
-  - Real-time current and power consumption
-  - Temperature monitoring with warnings
-  - Device state tracking (off/idle/running)
-  - Relay status display
-
-- **Device Control**
-  - Toggle device on/off
-  - Temperature threshold settings
-  - Emergency shutoff for high temperatures
-
-- **Data Visualization**
-  - Real-time power consumption graphs
-  - Temperature history
-  - Device state changes
-  - Historical data analysis
-
-- **User Settings**
-  - Temperature unit selection (Celsius/Fahrenheit)
-  - Notification preferences
-  - Device-specific settings
-  - User profile management
+- **Real-time Monitoring**: View power consumption, voltage, current, and temperature in real-time
+- **Remote Control**: Toggle devices on/off from anywhere with internet connectivity
+- **Scheduling**: Set up timers and recurring schedules for automatic operation
+- **Alerts & Notifications**: Receive alerts for anomalous conditions or critical events
+- **Power Usage Analytics**: Track and analyze power consumption over time
+- **Multiple Device Management**: Control multiple smart plugs from a single app
+- **User Management**: Secure authentication and device sharing capabilities
 
 ## Project Structure
 
 ```
-lib/
-├── screens/           # UI screens
-│   ├── device_list_screen.dart
-│   ├── device_detail_screen.dart
-│   ├── settings_screen.dart
-│   └── login_screen.dart
-├── services/          # Business logic and Firebase services
-│   ├── auth_service.dart
-│   ├── smart_plug_service.dart
-│   └── notification_service.dart
-├── widgets/           # Reusable UI components
-│   ├── device_card.dart
-│   ├── power_chart.dart
-│   └── temperature_chart.dart
-├── models/           # Data models
-│   ├── smart_plug_data.dart
-│   └── user_settings.dart
-└── main.dart         # Application entry point
+mobile_app/
+├── lib/
+│   ├── main.dart             # Application entry point
+│   ├── app.dart              # Root application widget
+│   ├── models/               # Data models
+│   ├── screens/              # UI screens
+│   ├── services/             # Service classes for business logic
+│   ├── widgets/              # Reusable UI components
+│   ├── utils/                # Utility functions and helpers
+│   └── config/               # Configuration files
+├── assets/                   # Static assets (images, fonts, etc.)
+├── test/                     # Unit and widget tests
+└── pubspec.yaml              # Dependencies and app metadata
 ```
 
-## Dependencies
+## Architecture
 
-- `firebase_core`: Firebase initialization
-- `firebase_auth`: User authentication
-- `cloud_firestore`: Real-time data storage
-- `provider`: State management
-- `fl_chart`: Data visualization
-- `shared_preferences`: Local settings storage
+The app follows a layered architecture pattern:
 
-## Setup
+1. **Presentation Layer**: UI components (screens, widgets) built with Flutter
+2. **Business Logic Layer**: Services that handle data processing and business rules
+3. **Data Layer**: Models and repository classes for data access
+4. **Infrastructure Layer**: Firebase integration for authentication, database, and messaging
 
-1. Install Flutter dependencies:
-   ```bash
+Services are organized around specific responsibilities, following SOLID principles. See the [services README](lib/services/README.md) for detailed information about each service.
+
+## Getting Started
+
+### Prerequisites
+
+- Flutter SDK 3.0+
+- Dart 2.18+
+- Firebase account with Realtime Database and Firestore enabled
+- Android Studio / VS Code with Flutter plugins
+
+### Installation
+
+1. Clone this repository
+2. Install dependencies:
+   ```
    flutter pub get
    ```
+3. Create a Firebase project and download the configuration files:
+   - `google-services.json` (for Android) to `android/app/`
+   - `GoogleService-Info.plist` (for iOS) to `ios/Runner/`
 
-2. Configure Firebase:
-   - Create a new Firebase project
-   - Enable Authentication (Email/Password)
-   - Enable Firestore Database
-   - Add web app to Firebase project
-   - Copy Firebase configuration to `lib/firebase_config.dart`
-
-3. Run the app:
-   ```bash
-   flutter run -d chrome
+4. Run the app:
+   ```
+   flutter run
    ```
 
-## Development
+## Firebase Configuration
 
-### Code Style
+The app requires the following Firebase services:
 
-- Follow Flutter's official style guide
-- Use meaningful variable and function names
-- Add comments for complex logic
-- Keep widgets small and focused
+- **Authentication**: For user management
+- **Cloud Firestore**: For structured data and queries
+- **Realtime Database**: For real-time device communication
+- **Cloud Messaging**: For push notifications
 
-### State Management
+Follow the [Firebase setup guide](https://firebase.google.com/docs/flutter/setup) to configure these services for your project.
 
-- Use Provider for global state
-- Keep UI state local when possible
-- Use ChangeNotifier for reactive updates
+## Integration with Smart Plug Hardware
 
-### Testing
+This app is designed to work with custom ESP8266/ESP32-based smart plug devices that communicate with Firebase. See the companion `firmware` directory in the root project for the device firmware code.
 
-- Write unit tests for services
-- Add widget tests for UI components
-- Test Firebase integration
+The communication flow between devices and the app is:
 
-## Deployment
-
-1. Build the web app:
-   ```bash
-   flutter build web
-   ```
-
-2. Deploy to Firebase Hosting:
-   ```bash
-   firebase deploy --only hosting
-   ```
+1. Devices publish data to Firebase Realtime Database
+2. The app subscribes to these updates for real-time monitoring
+3. The app sends commands to devices by writing to designated command nodes
+4. Devices listen for these commands and execute them
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License.
