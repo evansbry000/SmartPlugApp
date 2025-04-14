@@ -1,119 +1,184 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import '../services/smart_plug_service.dart';
 
-class RecentEventsWidget extends StatelessWidget {
-  final int maxEvents;
-  final bool showTitle;
-
-  const RecentEventsWidget({
-    super.key,
-    this.maxEvents = 3,
-    this.showTitle = true,
-  });
+class RecentEvents extends StatelessWidget {
+  const RecentEvents({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<SmartPlugService>(
-      builder: (context, service, child) {
-        final events = service.recentEvents;
-        
-        if (events.isEmpty) {
-          return const SizedBox.shrink();
-        }
-        
-        return Column(
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            if (showTitle) ...[
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Text(
-                  'Recent Events',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-            ],
-            Card(
-              child: ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: events.length > maxEvents ? maxEvents : events.length,
-                separatorBuilder: (context, index) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final event = events[index];
-                  final formattedDate = DateFormat('MMM d, h:mm a').format(event.timestamp);
-                  
-                  // Set icon and color based on event type
-                  IconData icon;
-                  Color color;
-                  
-                  switch (event.type) {
-                    case 'emergency':
-                      icon = Icons.warning_amber_rounded;
-                      color = Colors.red;
-                      break;
-                    case 'state_change':
-                      icon = Icons.device_hub;
-                      color = Colors.blue;
-                      break;
-                    case 'connection':
-                      icon = event.message == 'CONNECTED' ? Icons.wifi : Icons.wifi_off;
-                      color = event.message == 'CONNECTED' ? Colors.green : Colors.orange;
-                      break;
-                    case 'safety':
-                      icon = Icons.security;
-                      color = Colors.deepOrange;
-                      break;
-                    default:
-                      icon = Icons.info_outline;
-                      color = Colors.purple;
-                  }
-                  
-                  // Format message for display
-                  String displayMessage;
-                  switch (event.message) {
-                    case 'HIGH_TEMPERATURE':
-                      displayMessage = 'High temperature detected: ${event.temperature?.toStringAsFixed(1)}°C';
-                      break;
-                    case 'HIGH_CURRENT':
-                      displayMessage = 'High current detected';
-                      break;
-                    case 'AUTO_SHUTOFF_TEMPERATURE':
-                      displayMessage = 'Device auto-shutoff due to high temperature';
-                      break;
-                    case 'AUTO_SHUTOFF_CURRENT':
-                      displayMessage = 'Device auto-shutoff due to high current';
-                      break;
-                    case 'CONNECTED':
-                      displayMessage = 'Device connected';
-                      break;
-                    case 'DISCONNECTED':
-                      displayMessage = 'Device disconnected';
-                      break;
-                    default:
-                      displayMessage = event.message;
-                  }
-                  
-                  return ListTile(
-                    dense: true,
-                    leading: CircleAvatar(
-                      backgroundColor: color.withOpacity(0.2),
-                      child: Icon(icon, color: color, size: 20),
-                    ),
-                    title: Text(displayMessage),
-                    subtitle: Text(
-                      formattedDate,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  );
-                },
+            Text(
+              'Recent Events',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Latest notifications and alerts',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.grey,
               ),
             ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 200, // Fixed height for event list
+              child: _buildEventsList(),
+            ),
           ],
-        );
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEventsList() {
+    // For now, just show dummy events
+    final dummyEvents = [
+      _EventItem(
+        type: 'Power On',
+        time: DateTime.now().subtract(const Duration(minutes: 5)),
+        description: 'Device turned on',
+        severity: _EventSeverity.info,
+      ),
+      _EventItem(
+        type: 'High Power',
+        time: DateTime.now().subtract(const Duration(hours: 2)),
+        description: 'Power usage above normal: 1250W',
+        severity: _EventSeverity.warning,
+      ),
+      _EventItem(
+        type: 'Connection Lost',
+        time: DateTime.now().subtract(const Duration(hours: 12)),
+        description: 'Device went offline for 5 minutes',
+        severity: _EventSeverity.warning,
+      ),
+      _EventItem(
+        type: 'Firmware Update',
+        time: DateTime.now().subtract(const Duration(days: 1)),
+        description: 'Updated to firmware version 2.1.0',
+        severity: _EventSeverity.info,
+      ),
+    ];
+    
+    return ListView.separated(
+      physics: const ClampingScrollPhysics(),
+      shrinkWrap: true,
+      itemCount: dummyEvents.length,
+      separatorBuilder: (context, index) => const Divider(),
+      itemBuilder: (context, index) {
+        final event = dummyEvents[index];
+        return _buildEventItem(context, event);
       },
     );
   }
+
+  Widget _buildEventItem(BuildContext context, _EventItem event) {
+    IconData icon;
+    Color color;
+    
+    switch (event.severity) {
+      case _EventSeverity.info:
+        icon = Icons.info_outline;
+        color = Colors.blue;
+        break;
+      case _EventSeverity.warning:
+        icon = Icons.warning_amber;
+        color = Colors.orange;
+        break;
+      case _EventSeverity.alert:
+        icon = Icons.error_outline;
+        color = Colors.red;
+        break;
+    }
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Event icon
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 12),
+          // Event details
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      event.type,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      _formatEventTime(event.time),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  event.description,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  String _formatEventTime(DateTime time) {
+    final now = DateTime.now();
+    final difference = now.difference(time);
+    
+    if (difference.inSeconds < 60) {
+      return 'Just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes}m ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours}h ago';
+    } else {
+      return '${difference.inDays}d ago';
+    }
+  }
+}
+
+enum _EventSeverity {
+  info,
+  warning,
+  alert,
+}
+
+class _EventItem {
+  final String type;
+  final DateTime time;
+  final String description;
+  final _EventSeverity severity;
+  
+  _EventItem({
+    required this.type,
+    required this.time,
+    required this.description,
+    required this.severity,
+  });
 } 

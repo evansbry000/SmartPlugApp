@@ -3,13 +3,23 @@ import 'package:provider/provider.dart';
 import '../services/smart_plug_service.dart';
 
 class RelayControl extends StatelessWidget {
-  const RelayControl({super.key});
+  final String? deviceId;
+
+  const RelayControl({
+    super.key,
+    this.deviceId,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Consumer<SmartPlugService>(
       builder: (context, smartPlugService, child) {
-        final data = smartPlugService.currentData;
+        // If a specific device ID is provided, use that data
+        // Otherwise, use the current data from the service
+        final data = deviceId != null
+            ? smartPlugService.getDeviceData(deviceId!)
+            : smartPlugService.currentData;
+        
         if (data == null) return const SizedBox.shrink();
 
         return Card(
@@ -39,7 +49,9 @@ class RelayControl extends StatelessWidget {
                     Switch(
                       value: data.relayState,
                       onChanged: (value) {
-                        context.read<SmartPlugService>().toggleRelay(value);
+                        // Use the specific device ID if provided, otherwise use current data's device ID
+                        final targetDeviceId = deviceId ?? data.deviceId;
+                        context.read<SmartPlugService>().toggleRelay(targetDeviceId);
                       },
                     ),
                   ],

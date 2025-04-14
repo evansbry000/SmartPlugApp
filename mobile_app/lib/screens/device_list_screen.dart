@@ -2,119 +2,160 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/smart_plug_service.dart';
-import '../widgets/device_card.dart';
+import '../widgets/smart_plug_card.dart';
+import 'device_detail_screen.dart';
 import 'settings_screen.dart';
+import '../models/smart_plug_data.dart';
 
-class DeviceListScreen extends StatelessWidget {
+class DeviceListScreen extends StatefulWidget {
   const DeviceListScreen({super.key});
 
   @override
+  State<DeviceListScreen> createState() => _DeviceListScreenState();
+}
+
+class _DeviceListScreenState extends State<DeviceListScreen> {
+  @override
+  void initState() {
+    super.initState();
+    
+    // Initialize the smart plug service
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final smartPlugService = Provider.of<SmartPlugService>(context, listen: false);
+      smartPlugService.initialize();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isLargeScreen = screenWidth > 900;
+    final isMediumScreen = screenWidth > 600 && screenWidth <= 900;
+    
     return Scaffold(
       appBar: AppBar(
-        title: const Text('My Smart Plugs'),
+        title: const Text('Smart Plugs'),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => const SettingsScreen(),
-                ),
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
               );
             },
           ),
           IconButton(
             icon: const Icon(Icons.logout),
-            onPressed: () async {
-              try {
-                final auth = Provider.of<AuthService>(context, listen: false);
-                await auth.signOut();
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Signed out successfully'),
-                      backgroundColor: Colors.green,
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                }
-              } catch (e) {
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Error signing out'),
-                      backgroundColor: Colors.red,
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                }
-              }
+            onPressed: () {
+              Provider.of<AuthService>(context, listen: false).signOut();
             },
           ),
         ],
       ),
       body: Consumer<SmartPlugService>(
-        builder: (context, service, child) {
-          if (service.isLoading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          // For now, we're only showing one device
-          final device = service.currentData;
-          if (device == null) {
+        builder: (context, smartPlugService, child) {
+          if (smartPlugService.isLoading) {
             return const Center(
-              child: Text('No devices found. Add a device to get started.'),
+              child: CircularProgressIndicator(),
             );
           }
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              DeviceCard(
-                deviceName: 'Smart Plug 1',
-                deviceState: device.deviceState,
-                current: device.current,
-                power: device.power,
-                temperature: device.temperature,
-                relayState: device.relayState,
-                onToggle: (state) async {
-                  try {
-                    await service.toggleRelay(state);
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            state ? 'Device turned on' : 'Device turned off',
-                          ),
-                          backgroundColor: Colors.green,
-                          duration: const Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  } catch (e) {
-                    if (context.mounted) {
+          if (smartPlugService.devices.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.electrical_services_outlined,
+                    size: 80,
+                    color: Colors.grey,
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'No Smart Plugs Found',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Connect a Smart Plug to get started',
+                    style: TextStyle(
+                      color: Colors.grey,
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      // In a real app, this would open a flow to add a new device
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Error toggling device'),
-                          backgroundColor: Colors.red,
-                          duration: Duration(seconds: 2),
+                          content: Text('Device setup would start here'),
                         ),
                       );
-                    }
-                  }
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add Smart Plug'),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          // Determine the number of columns based on screen width
+          int crossAxisCount;
+          if (isLargeScreen) {
+            crossAxisCount = 3;
+          } else if (isMediumScreen) {
+            crossAxisCount = 2;
+          } else {
+            crossAxisCount = 1;
+          }
+
+          return Center(
+            child: Container(
+              constraints: BoxConstraints(
+                maxWidth: isLargeScreen ? 1200 : isMediumScreen ? 800 : 600,
+              ),
+              padding: const EdgeInsets.all(16),
+              child: GridView.builder(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: crossAxisCount,
+                  childAspectRatio: 1.5,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
+                ),
+                itemCount: smartPlugService.devices.length,
+                itemBuilder: (context, index) {
+                  final deviceId = smartPlugService.devices[index];
+                  final deviceData = smartPlugService.getDeviceData(deviceId);
+                  final isOnline = smartPlugService.isDeviceOnline(deviceId);
+                  
+                  return SmartPlugCard(
+                    deviceId: deviceId,
+                    deviceData: deviceData,
+                    isOnline: isOnline,
+                    onToggle: () {
+                      smartPlugService.toggleRelay(deviceId);
+                    },
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => DeviceDetailScreen(
+                            deviceId: deviceId,
+                          ),
+                        ),
+                      );
+                    },
+                  );
                 },
               ),
-            ],
+            ),
           );
         },
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // TODO: Implement add device functionality
-        },
-        child: const Icon(Icons.add),
       ),
     );
   }

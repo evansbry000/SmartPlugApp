@@ -255,4 +255,9 @@ class AuthService with ChangeNotifier {
       rethrow;
     }
   }
+
+  /// Get the current authenticated user.
+  ///
+  /// Returns the currently authenticated user object.
+  User? get currentUser => _auth.currentUser;
 } 

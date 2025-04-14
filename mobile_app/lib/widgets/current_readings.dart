@@ -3,13 +3,23 @@ import 'package:provider/provider.dart';
 import '../services/smart_plug_service.dart';
 
 class CurrentReadings extends StatelessWidget {
-  const CurrentReadings({super.key});
+  final String? deviceId;
+
+  const CurrentReadings({
+    super.key,
+    this.deviceId,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Consumer<SmartPlugService>(
       builder: (context, smartPlugService, child) {
-        final data = smartPlugService.currentData;
+        // If a specific device ID is provided, use that data
+        // Otherwise, use the current data from the service
+        final data = deviceId != null
+            ? smartPlugService.getDeviceData(deviceId!)
+            : smartPlugService.currentData;
+            
         if (data == null) return const SizedBox.shrink();
 
         return Card(
@@ -26,11 +36,11 @@ class CurrentReadings extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                _buildReadingRow('Voltage', '${data.voltage.toStringAsFixed(2)} V'),
-                const SizedBox(height: 8),
                 _buildReadingRow('Current', '${data.current.toStringAsFixed(2)} A'),
                 const SizedBox(height: 8),
                 _buildReadingRow('Power', '${data.power.toStringAsFixed(2)} W'),
+                const SizedBox(height: 8),
+                _buildReadingRow('Temperature', '${data.temperature.toStringAsFixed(1)}°C'),
                 const SizedBox(height: 8),
                 _buildReadingRow(
                   'Last Updated',

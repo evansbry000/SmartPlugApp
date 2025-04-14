@@ -17,9 +17,11 @@ dependencies:
   cloud_firestore: 4.9.1
   cloud_firestore_web: 3.7.0
   cloud_firestore_platform_interface: 5.16.0
-  firebase_database: ^10.3.0
+  firebase_database: 10.2.5
+  firebase_messaging: 14.6.5
+  firebase_messaging_web: 3.5.4
+  flutter_local_notifications: 14.1.1
   provider: ^6.1.1
-  fl_chart: ^0.55.0
   intl: ^0.19.0
   shared_preferences: ^2.2.2
   js: ^0.6.7

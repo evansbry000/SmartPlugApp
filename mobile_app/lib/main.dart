@@ -151,117 +151,143 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Get screen width to determine if we should constrain the width
+    final screenWidth = MediaQuery.of(context).size.width;
+    final isLargeScreen = screenWidth > 600;
+    
     return Scaffold(
       appBar: AppBar(
         title: Text(_isSignUp ? 'Sign Up' : 'Login'),
+        centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Consumer<AuthService>(
-                builder: (context, auth, child) {
-                  if (auth.errorMessage != null) {
-                    return Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: Colors.red.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.red.shade200),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.error_outline, color: Colors.red.shade700),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              auth.errorMessage!,
-                              style: TextStyle(color: Colors.red.shade700),
-                            ),
-                          ),
-                          IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: () {
-                              auth.clearError();
-                            },
-                          ),
-                        ],
-                      ),
-                    );
-                  }
-                  return const SizedBox.shrink();
-                },
-              ),
-              TextFormField(
-                controller: _emailController,
-                decoration: const InputDecoration(
-                  labelText: 'Email',
-                  border: OutlineInputBorder(),
+      body: Center(
+        child: Container(
+          constraints: BoxConstraints(
+            maxWidth: isLargeScreen ? 500 : screenWidth,
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Form(
+            key: _formKey,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // App logo or title
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 32.0),
+                  child: Text(
+                    'Smart Plug',
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).primaryColor,
+                    ),
+                  ),
                 ),
-                keyboardType: TextInputType.emailAddress,
-                enabled: !_isLoading,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your email';
-                  }
-                  if (!value.contains('@')) {
-                    return 'Please enter a valid email address';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _passwordController,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  border: OutlineInputBorder(),
-                ),
-                obscureText: true,
-                enabled: !_isLoading,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter your password';
-                  }
-                  if (value.length < 6) {
-                    return 'Password must be at least 6 characters';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _isLoading ? null : _submit,
-                child: _isLoading
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
+                
+                Consumer<AuthService>(
+                  builder: (context, auth, child) {
+                    if (auth.errorMessage != null) {
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        margin: const EdgeInsets.only(bottom: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.red.shade200),
                         ),
-                      )
-                    : Text(_isSignUp ? 'Sign Up' : 'Login'),
-              ),
-              TextButton(
-                onPressed: _isLoading
-                    ? null
-                    : () {
-                        setState(() {
-                          _isSignUp = !_isSignUp;
-                          _emailController.clear();
-                          _passwordController.clear();
-                        });
-                      },
-                child: Text(_isSignUp
-                    ? 'Already have an account? Login'
-                    : 'Need an account? Sign Up'),
-              ),
-            ],
+                        child: Row(
+                          children: [
+                            Icon(Icons.error_outline, color: Colors.red.shade700),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                auth.errorMessage!,
+                                style: TextStyle(color: Colors.red.shade700),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: () {
+                                auth.clearError();
+                              },
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
+                TextFormField(
+                  controller: _emailController,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  enabled: !_isLoading,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter your email';
+                    }
+                    if (!value.contains('@')) {
+                      return 'Please enter a valid email address';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _passwordController,
+                  decoration: const InputDecoration(
+                    labelText: 'Password',
+                    border: OutlineInputBorder(),
+                  ),
+                  obscureText: true,
+                  enabled: !_isLoading,
+                  validator: (value) {
+                    if (value == null || value.isEmpty) {
+                      return 'Please enter your password';
+                    }
+                    if (value.length < 6) {
+                      return 'Password must be at least 6 characters';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 24),
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    onPressed: _isLoading ? null : _submit,
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : Text(_isSignUp ? 'Sign Up' : 'Login'),
+                  ),
+                ),
+                TextButton(
+                  onPressed: _isLoading
+                      ? null
+                      : () {
+                          setState(() {
+                            _isSignUp = !_isSignUp;
+                            _emailController.clear();
+                            _passwordController.clear();
+                          });
+                        },
+                  child: Text(_isSignUp
+                      ? 'Already have an account? Login'
+                      : 'Need an account? Sign Up'),
+                ),
+              ],
+            ),
           ),
         ),
       ),

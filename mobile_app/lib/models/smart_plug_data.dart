@@ -10,11 +10,12 @@ class SmartPlugData {
   final double power;
   final double energyToday;
   final double energyTotal;
-  final int temperature;
+  final double temperature;
   final bool overTemperature;
   final bool overCurrent;
   final DateTime timestamp;
   final bool isOnline;
+  final int rssi;
 
   SmartPlugData({
     required this.deviceId,
@@ -29,6 +30,7 @@ class SmartPlugData {
     required this.overCurrent,
     required this.timestamp,
     required this.isOnline,
+    this.rssi = -50,
   });
 
   /// Create a SmartPlugData object from RTDB data
@@ -45,11 +47,12 @@ class SmartPlugData {
       power: _parseDouble(data['power']) ?? 0.0,
       energyToday: _parseDouble(data['energyToday']) ?? 0.0,
       energyTotal: _parseDouble(data['energyTotal']) ?? 0.0,
-      temperature: _parseInt(data['temperature']) ?? 0,
+      temperature: _parseDouble(data['temperature']) ?? 0.0,
       overTemperature: data['overTemperature'] == true,
       overCurrent: data['overCurrent'] == true,
       timestamp: timestamp,
       isOnline: data['online'] == true || data['isOnline'] == true,
+      rssi: _parseInt(data['rssi']) ?? -50,
     );
   }
 
@@ -69,11 +72,12 @@ class SmartPlugData {
       power: (data['power'] as num?)?.toDouble() ?? 0.0,
       energyToday: (data['energyToday'] as num?)?.toDouble() ?? 0.0,
       energyTotal: (data['energyTotal'] as num?)?.toDouble() ?? 0.0,
-      temperature: (data['temperature'] as num?)?.toInt() ?? 0,
+      temperature: (data['temperature'] as num?)?.toDouble() ?? 0.0,
       overTemperature: data['overTemperature'] == true,
       overCurrent: data['overCurrent'] == true,
       timestamp: timestamp,
       isOnline: data['isOnline'] == true,
+      rssi: (data['rssi'] as num?)?.toInt() ?? -50,
     );
   }
 
@@ -92,6 +96,7 @@ class SmartPlugData {
       'overCurrent': overCurrent,
       'timestamp': timestamp.millisecondsSinceEpoch,
       'isOnline': isOnline,
+      'rssi': rssi,
     };
   }
 
@@ -110,6 +115,7 @@ class SmartPlugData {
       'overCurrent': overCurrent,
       'timestamp': Timestamp.fromDate(timestamp),
       'isOnline': isOnline,
+      'rssi': rssi,
     };
   }
 
@@ -140,11 +146,12 @@ class SmartPlugData {
     double? power,
     double? energyToday,
     double? energyTotal,
-    int? temperature,
+    double? temperature,
     bool? overTemperature,
     bool? overCurrent,
     DateTime? timestamp,
     bool? isOnline,
+    int? rssi,
   }) {
     return SmartPlugData(
       deviceId: deviceId ?? this.deviceId,
@@ -159,6 +166,43 @@ class SmartPlugData {
       overCurrent: overCurrent ?? this.overCurrent,
       timestamp: timestamp ?? this.timestamp,
       isOnline: isOnline ?? this.isOnline,
+      rssi: rssi ?? this.rssi,
+    );
+  }
+
+  /// Create a SmartPlugData instance from Firebase Realtime Database data
+  factory SmartPlugData.fromRealtimeDb(Map<dynamic, dynamic> data) {
+    final Map<String, dynamic> typedData = {};
+    
+    // Convert dynamic keys to string keys
+    data.forEach((key, value) {
+      if (key is String) {
+        typedData[key] = value;
+      }
+    });
+    
+    // Parse timestamp
+    DateTime timestamp;
+    if (typedData.containsKey('timestamp') && typedData['timestamp'] is int) {
+      timestamp = DateTime.fromMillisecondsSinceEpoch(typedData['timestamp'] as int);
+    } else {
+      timestamp = DateTime.now();
+    }
+    
+    return SmartPlugData(
+      deviceId: typedData['deviceId']?.toString() ?? '',
+      relayState: typedData['relayState'] as bool? ?? false,
+      current: (typedData['current'] as num?)?.toDouble() ?? 0.0,
+      voltage: (typedData['voltage'] as num?)?.toDouble() ?? 220.0,
+      power: (typedData['power'] as num?)?.toDouble() ?? 0.0,
+      energyToday: (typedData['energyToday'] as num?)?.toDouble() ?? 0.0,
+      energyTotal: (typedData['energyTotal'] as num?)?.toDouble() ?? 0.0,
+      temperature: (typedData['temperature'] as num?)?.toDouble() ?? 0.0,
+      overTemperature: typedData['overTemperature'] as bool? ?? false,
+      overCurrent: typedData['overCurrent'] as bool? ?? false,
+      timestamp: timestamp,
+      isOnline: typedData['isOnline'] as bool? ?? true,
+      rssi: (typedData['rssi'] as num?)?.toInt() ?? -50,
     );
   }
 }

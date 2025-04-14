@@ -58,7 +58,7 @@ const char* FIREBASE_API_KEY = "AIzaSyCDETZaO4KfbuahJuCrvupJgo4nFPvkA8E";  // We
 #define EEPROM_ENERGY_ADDR 100
 
 // Data update intervals
-const unsigned long STATUS_UPDATE_INTERVAL = 15000;    // 15 seconds for normal status updates
+const unsigned long STATUS_UPDATE_INTERVAL = 5000;    // 5 seconds for normal status updates
 const unsigned long SENSOR_READ_INTERVAL = 1000;       // 1 second for sensor readings
 const unsigned long COMMAND_CHECK_INTERVAL = 5000;     // 5 seconds for command checking
 const unsigned long ENERGY_SAVE_INTERVAL = 300000;     // 5 minutes for saving energy data to EEPROM
