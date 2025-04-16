@@ -34,14 +34,13 @@
 #define STATUS_LED_PIN LED_BUILTIN     // Status LED pin
 
 // ACS712 Sensor Configuration
-#define ACS712_SENSITIVITY 0.185      // 185 mV per Amp for 5A module (adjust for your module)
-#define ACS712_ZERO_POINT 512         // Zero point for ACS712 (may need calibration)
-#define VOLTAGE 120.0                 // Line voltage assumption (V)
-#define CURRENT_SAMPLES 20            // Number of samples for current measurement
+#define MVPERAMP 66                    // 66mV per Amp for 30A Module
+#define VOLTAGE 120.0                  // Line voltage assumption (V)
+#define CURRENT_CALIBRATION 1.3        // Empirical calibration factor
 
 // Safety Settings
 #define TEMP_THRESHOLD 70.0           // Temperature threshold for auto-shutoff (°C)
-#define MAX_CURRENT 10.0              // Maximum allowable current (A)
+#define MAX_CURRENT 3.0              // Maximum allowable current (A)
 
 // WiFi credentials
 const char* WIFI_SSID = "FatLARDbev";
@@ -58,7 +57,7 @@ const char* FIREBASE_API_KEY = "AIzaSyCDETZaO4KfbuahJuCrvupJgo4nFPvkA8E";  // We
 #define EEPROM_ENERGY_ADDR 100
 
 // Data update intervals
-const unsigned long STATUS_UPDATE_INTERVAL = 5000;    // 5 seconds for normal status updates
+const unsigned long STATUS_UPDATE_INTERVAL = 1500;    // 5 seconds for normal status updates
 const unsigned long SENSOR_READ_INTERVAL = 1000;       // 1 second for sensor readings
 const unsigned long COMMAND_CHECK_INTERVAL = 5000;     // 5 seconds for command checking
 const unsigned long ENERGY_SAVE_INTERVAL = 300000;     // 5 minutes for saving energy data to EEPROM
@@ -93,6 +92,7 @@ HttpClient httpClient(wifiSSLClient, FIREBASE_HOST, 443);  // Using port 443 for
 Timer<5> timer;
 
 // Function prototypes
+float getVPP(void);  // New function for measuring peak-to-peak voltage
 bool readSensors(void *);
 bool checkCommands(void *);
 bool updateStatus(void *);
@@ -205,22 +205,17 @@ void loop() {
 }
 
 bool readSensors(void *) {
-  // Read current sensor (ACS712)
-  long currentSum = 0;
-  for (int i = 0; i < CURRENT_SAMPLES; i++) {
-    int rawValue = analogRead(CURRENT_SENSOR_PIN);
-    currentSum += rawValue;
-    delayMicroseconds(1000);  // Small delay between readings
+  // Read current sensor (ACS712) using improved AC measurement method
+  float voltagePP = getVPP();
+  float voltageRMS = (voltagePP/2.0) * 0.707;  // Convert to RMS value
+  current = (voltageRMS * 1000)/MVPERAMP;      // Convert to current
+  
+  // Apply calibration factor
+  current = current / CURRENT_CALIBRATION;
+  if(current < .15){
+    current=0;
   }
-  
-  int currentAvg = currentSum / CURRENT_SAMPLES;
-  
-  // Convert to amperes - calibrate these values for your specific setup
-  // For ACS712 5A module: 185mV per Amp, VCC=5V
-  int zeroPoint = ACS712_ZERO_POINT;  // This should be calibrated for your sensor
-  float voltage = (currentAvg - zeroPoint) * (5.0 / 1023.0);
-  current = voltage / ACS712_SENSITIVITY;
-  
+  Serial.println(current);
   // Set minimum threshold to filter noise
   if (abs(current) < 0.1) {
     current = 0.0;
@@ -415,6 +410,7 @@ bool checkSafety(void *) {
   // Check for over-current condition
   if (current > MAX_CURRENT) {
     emergencyShutdown = true;
+    Serial.println("Current Over Max Threshold");
     if (relayState) {
       processRelay(false);  // Turn off relay
       sendEventToFirebase("emergency", "OVER_CURRENT");
@@ -620,4 +616,30 @@ void resetDailyEnergy() {
   
   // Send event
   sendEventToFirebase("system", "DAILY_RESET");
+}
+
+// New function to measure peak-to-peak voltage for AC current sensing
+float getVPP() {
+  int maxValue = 0;             // store max value here
+  int minValue = 1024;          // store min value here
+  int readValue;                // value read from the sensor
+  
+  // Sample for 500ms to balance accuracy with responsiveness
+  uint32_t start_time = millis();
+  while((millis()-start_time) < 500) { // 500ms sampling period
+    readValue = analogRead(CURRENT_SENSOR_PIN);
+    // Record maximum and minimum values
+    if (readValue > maxValue) {
+      maxValue = readValue;
+    }
+    if (readValue < minValue) {
+      minValue = readValue;
+    }
+    // Small delay to prevent excessive readings
+    delayMicroseconds(200);
+  }
+   
+  // Calculate peak-to-peak voltage
+  float result = ((maxValue - minValue) * 5.0)/1024.0;
+  return result;
 }
