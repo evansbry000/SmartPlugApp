@@ -44,8 +44,8 @@
 #define MAX_CURRENT 10.0              // Maximum allowable current (A)
 
 // WiFi credentials
-const char* WIFI_SSID = "Corner Office";
-const char* WIFI_PASSWORD = "WhyweeAlecBev";
+const char* WIFI_SSID = "FatLARDbev";
+const char* WIFI_PASSWORD = "fatlardr6";
 
 // Firebase settings
 const char* FIREBASE_HOST = "smartplugdatabase-f1fd4-default-rtdb.firebaseio.com";
