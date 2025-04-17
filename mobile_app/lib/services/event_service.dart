@@ -36,6 +36,9 @@ class SmartPlugEvent {
   
   /// When the event was acknowledged (null if not acknowledged)
   final int? acknowledgedAt;
+  
+  /// Type of timestamp (realTime or deviceTime)
+  final String timestampType;
 
   SmartPlugEvent({
     required this.id,
@@ -46,6 +49,7 @@ class SmartPlugEvent {
     this.data = const {},
     this.acknowledged = false,
     this.acknowledgedAt,
+    this.timestampType = 'realTime',
   });
 
   /// Create a SmartPlugEvent from a Firestore document.
@@ -53,19 +57,39 @@ class SmartPlugEvent {
   /// [doc] The Firestore document containing event data
   factory SmartPlugEvent.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
+    final String deviceId = data['deviceId']?.toString() ?? '';
+    final String timestampType = data['timestampType']?.toString() ?? 'realTime';
+    
+    DateTime timestamp;
+    if (data['timestamp'] != null) {
+      if (timestampType == 'deviceTime' && data['timestamp'] is int) {
+        // Record first connection time if needed
+        SmartPlugData.recordDeviceFirstConnection(deviceId);
+        
+        // Convert device time to real time
+        timestamp = SmartPlugData.deviceTimeToRealTime(deviceId, data['timestamp'] as int);
+      } else if (data['timestamp'] is Timestamp) {
+        // Standard Firestore timestamp
+        timestamp = (data['timestamp'] as Timestamp).toDate();
+      } else if (data['timestamp'] is int) {
+        timestamp = DateTime.fromMillisecondsSinceEpoch(data['timestamp'] as int);
+      } else {
+        timestamp = DateTime.now();
+      }
+    } else {
+      timestamp = DateTime.now();
+    }
     
     return SmartPlugEvent(
       id: doc.id,
       type: data['type'] ?? 'unknown',
       message: data['message'] ?? 'No message',
       severity: data['severity'] ?? 'info',
-      timestamp: (data['timestamp'] is Timestamp)
-          ? (data['timestamp'] as Timestamp).toDate()
-          : DateTime.fromMillisecondsSinceEpoch(
-              (data['timestamp'] as int?) ?? DateTime.now().millisecondsSinceEpoch),
+      timestamp: timestamp,
       data: Map<String, dynamic>.from(data['data'] ?? {}),
       acknowledged: data['acknowledged'] ?? false,
       acknowledgedAt: data['acknowledgedAt'] as int?,
+      timestampType: timestampType,
     );
   }
 
@@ -74,16 +98,36 @@ class SmartPlugEvent {
   /// [data] The database data containing event information
   /// [id] The unique identifier for the event
   factory SmartPlugEvent.fromRTDB(Map<String, dynamic> data, String id) {
+    final String deviceId = data['deviceId']?.toString() ?? '';
+    final String timestampType = data['timestampType']?.toString() ?? 'realTime';
+    
+    DateTime timestamp;
+    if (data['timestamp'] != null) {
+      if (timestampType == 'deviceTime' && data['timestamp'] is int) {
+        // Record first connection time if needed
+        SmartPlugData.recordDeviceFirstConnection(deviceId);
+        
+        // Convert device time to real time
+        timestamp = SmartPlugData.deviceTimeToRealTime(deviceId, data['timestamp'] as int);
+      } else if (data['timestamp'] is int) {
+        timestamp = DateTime.fromMillisecondsSinceEpoch(data['timestamp'] as int);
+      } else {
+        timestamp = DateTime.now();
+      }
+    } else {
+      timestamp = DateTime.now();
+    }
+    
     return SmartPlugEvent(
       id: id,
       type: data['type'] ?? 'unknown',
       message: data['message'] ?? 'No message',
       severity: data['severity'] ?? 'info',
-      timestamp: DateTime.fromMillisecondsSinceEpoch(
-          (data['timestamp'] as int?) ?? DateTime.now().millisecondsSinceEpoch),
+      timestamp: timestamp,
       data: Map<String, dynamic>.from(data['data'] ?? {}),
       acknowledged: false,
       acknowledgedAt: null,
+      timestampType: timestampType,
     );
   }
 
@@ -99,6 +143,7 @@ class SmartPlugEvent {
       'timestamp': timestamp.millisecondsSinceEpoch,
       'data': data,
       'acknowledged': acknowledged,
+      'timestampType': timestampType,
     };
     
     if (acknowledgedAt != null) {
@@ -120,6 +165,7 @@ class SmartPlugEvent {
     Map<String, dynamic>? data,
     bool? acknowledged,
     int? acknowledgedAt,
+    String? timestampType,
   }) {
     return SmartPlugEvent(
       id: id ?? this.id,
@@ -130,6 +176,7 @@ class SmartPlugEvent {
       data: data ?? this.data,
       acknowledged: acknowledged ?? this.acknowledged,
       acknowledgedAt: acknowledgedAt ?? this.acknowledgedAt,
+      timestampType: timestampType ?? this.timestampType,
     );
   }
 }

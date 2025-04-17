@@ -36,7 +36,7 @@ class CurrentReadings extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                _buildReadingRow('Current', '${data.current.toStringAsFixed(2)} A'),
+                _buildReadingRow('Amperage', '${data.current.toStringAsFixed(2)} A'),
                 const SizedBox(height: 8),
                 _buildReadingRow('Power', '${data.power.toStringAsFixed(2)} W'),
                 const SizedBox(height: 8),
@@ -77,8 +77,52 @@ class CurrentReadings extends StatelessWidget {
   }
 
   String _formatTimestamp(DateTime timestamp) {
-    return '${timestamp.hour.toString().padLeft(2, '0')}:'
-        '${timestamp.minute.toString().padLeft(2, '0')}:'
-        '${timestamp.second.toString().padLeft(2, '0')}';
+    // Convert to Central Time
+    final centralTime = _toCentralTime(timestamp);
+    
+    // Format date and time
+    return '${centralTime.hour.toString().padLeft(2, '0')}:'
+        '${centralTime.minute.toString().padLeft(2, '0')}:'
+        '${centralTime.second.toString().padLeft(2, '0')} '
+        '${_getMonthAbbreviation(centralTime.month)} ${centralTime.day}';
+  }
+  
+  // Convert UTC to Central Time (UTC-6, or UTC-5 during DST)
+  DateTime _toCentralTime(DateTime utcTime) {
+    final bool isDST = _isInDST(utcTime);
+    final int offsetHours = isDST ? -5 : -6; // Central Time offset
+    
+    return utcTime.toUtc().add(Duration(hours: offsetHours));
+  }
+  
+  // Simple DST check for U.S. Central Time
+  // DST starts second Sunday in March, ends first Sunday in November
+  bool _isInDST(DateTime dateTime) {
+    final int year = dateTime.year;
+    
+    // Find second Sunday in March
+    DateTime marchStart = DateTime.utc(year, 3, 1);
+    while (marchStart.weekday != DateTime.sunday) {
+      marchStart = marchStart.add(const Duration(days: 1));
+    }
+    marchStart = marchStart.add(const Duration(days: 7)); // Second Sunday
+    
+    // Find first Sunday in November
+    DateTime novEnd = DateTime.utc(year, 11, 1);
+    while (novEnd.weekday != DateTime.sunday) {
+      novEnd = novEnd.add(const Duration(days: 1));
+    }
+    
+    // DST is active from 2AM on second Sunday in March until 2AM on first Sunday in November
+    DateTime dstStart = DateTime.utc(year, marchStart.month, marchStart.day, 2);
+    DateTime dstEnd = DateTime.utc(year, novEnd.month, novEnd.day, 2);
+    
+    return dateTime.isAfter(dstStart) && dateTime.isBefore(dstEnd);
+  }
+  
+  String _getMonthAbbreviation(int month) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return months[month - 1];
   }
 } 

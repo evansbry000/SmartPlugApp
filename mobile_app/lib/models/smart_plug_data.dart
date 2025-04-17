@@ -16,6 +16,10 @@ class SmartPlugData {
   final DateTime timestamp;
   final bool isOnline;
   final int rssi;
+  final String timestampType;
+
+  /// First connection time to calculate real timestamps from device time
+  static final Map<String, DateTime> _deviceFirstConnections = {};
 
   SmartPlugData({
     required this.deviceId,
@@ -31,16 +35,54 @@ class SmartPlugData {
     required this.timestamp,
     required this.isOnline,
     this.rssi = -50,
+    this.timestampType = 'realTime',
   });
+
+  /// Record the first time we see a device to use as reference for device time
+  static void recordDeviceFirstConnection(String deviceId) {
+    if (!_deviceFirstConnections.containsKey(deviceId)) {
+      _deviceFirstConnections[deviceId] = DateTime.now();
+    }
+  }
+
+  /// Get the first connection time for a device
+  static DateTime getDeviceFirstConnection(String deviceId) {
+    return _deviceFirstConnections[deviceId] ?? DateTime.now();
+  }
+
+  /// Convert device time to real time based on first connection
+  static DateTime deviceTimeToRealTime(String deviceId, int deviceTimeMs) {
+    // Get first connection time, or use now if not available
+    final firstConnection = _deviceFirstConnections[deviceId] ?? DateTime.now();
+    
+    // Calculate real time: first connection time + device uptime
+    return firstConnection.add(Duration(milliseconds: deviceTimeMs));
+  }
 
   /// Create a SmartPlugData object from RTDB data
   factory SmartPlugData.fromRTDB(Map<dynamic, dynamic> data) {
-    final timestamp = data['timestamp'] != null
-        ? DateTime.fromMillisecondsSinceEpoch(data['timestamp'] as int)
-        : DateTime.now();
+    // Handle the new timestamp approach
+    final String deviceId = data['deviceId']?.toString() ?? '';
+    final String timestampType = data['timestampType']?.toString() ?? 'realTime';
+    
+    DateTime timestamp;
+    if (data['timestamp'] != null) {
+      if (timestampType == 'deviceTime') {
+        // Record first connection if needed
+        recordDeviceFirstConnection(deviceId);
+        
+        // Convert device time to real time
+        timestamp = deviceTimeToRealTime(deviceId, data['timestamp'] as int);
+      } else {
+        // Standard timestamp
+        timestamp = DateTime.fromMillisecondsSinceEpoch(data['timestamp'] as int);
+      }
+    } else {
+      timestamp = DateTime.now();
+    }
         
     return SmartPlugData(
-      deviceId: data['deviceId']?.toString() ?? '',
+      deviceId: deviceId,
       relayState: data['relay'] == true || data['relayState'] == true,
       current: _parseDouble(data['current']) ?? 0.0,
       voltage: _parseDouble(data['voltage']) ?? 0.0,
@@ -53,6 +95,7 @@ class SmartPlugData {
       timestamp: timestamp,
       isOnline: data['online'] == true || data['isOnline'] == true,
       rssi: _parseInt(data['rssi']) ?? -50,
+      timestampType: timestampType,
     );
   }
 
@@ -60,12 +103,29 @@ class SmartPlugData {
   factory SmartPlugData.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
     
-    final timestamp = data['timestamp'] != null
-        ? (data['timestamp'] as Timestamp).toDate()
-        : DateTime.now();
+    final String deviceId = data['deviceId']?.toString() ?? doc.id;
+    final String timestampType = data['timestampType']?.toString() ?? 'realTime';
+    
+    DateTime timestamp;
+    if (data['timestamp'] != null) {
+      if (timestampType == 'deviceTime' && data['timestamp'] is int) {
+        // Record first connection if needed
+        recordDeviceFirstConnection(deviceId);
+        
+        // Convert device time to real time
+        timestamp = deviceTimeToRealTime(deviceId, data['timestamp'] as int);
+      } else if (data['timestamp'] is Timestamp) {
+        // Standard Firestore timestamp
+        timestamp = (data['timestamp'] as Timestamp).toDate();
+      } else {
+        timestamp = DateTime.now();
+      }
+    } else {
+      timestamp = DateTime.now();
+    }
         
     return SmartPlugData(
-      deviceId: data['deviceId']?.toString() ?? doc.id,
+      deviceId: deviceId,
       relayState: data['relayState'] == true,
       current: (data['current'] as num?)?.toDouble() ?? 0.0,
       voltage: (data['voltage'] as num?)?.toDouble() ?? 0.0,
@@ -78,6 +138,7 @@ class SmartPlugData {
       timestamp: timestamp,
       isOnline: data['isOnline'] == true,
       rssi: (data['rssi'] as num?)?.toInt() ?? -50,
+      timestampType: timestampType,
     );
   }
 
@@ -97,6 +158,7 @@ class SmartPlugData {
       'timestamp': timestamp.millisecondsSinceEpoch,
       'isOnline': isOnline,
       'rssi': rssi,
+      'timestampType': timestampType,
     };
   }
 
@@ -116,25 +178,8 @@ class SmartPlugData {
       'timestamp': Timestamp.fromDate(timestamp),
       'isOnline': isOnline,
       'rssi': rssi,
+      'timestampType': timestampType,
     };
-  }
-
-  /// Helper method to parse doubles safely
-  static double? _parseDouble(dynamic value) {
-    if (value == null) return null;
-    if (value is double) return value;
-    if (value is int) return value.toDouble();
-    if (value is String) return double.tryParse(value);
-    return null;
-  }
-
-  /// Helper method to parse integers safely
-  static int? _parseInt(dynamic value) {
-    if (value == null) return null;
-    if (value is int) return value;
-    if (value is double) return value.toInt();
-    if (value is String) return int.tryParse(value);
-    return null;
   }
 
   /// Create a copy with updated fields
@@ -152,6 +197,7 @@ class SmartPlugData {
     DateTime? timestamp,
     bool? isOnline,
     int? rssi,
+    String? timestampType,
   }) {
     return SmartPlugData(
       deviceId: deviceId ?? this.deviceId,
@@ -167,11 +213,15 @@ class SmartPlugData {
       timestamp: timestamp ?? this.timestamp,
       isOnline: isOnline ?? this.isOnline,
       rssi: rssi ?? this.rssi,
+      timestampType: timestampType ?? this.timestampType,
     );
   }
 
   /// Create a SmartPlugData instance from Firebase Realtime Database data
-  factory SmartPlugData.fromRealtimeDb(Map<dynamic, dynamic> data) {
+  factory SmartPlugData.fromRealtimeDb({
+    required String deviceId, 
+    required Map<dynamic, dynamic> data
+  }) {
     final Map<String, dynamic> typedData = {};
     
     // Convert dynamic keys to string keys
@@ -181,16 +231,29 @@ class SmartPlugData {
       }
     });
     
+    // Get timestamp type
+    final String timestampType = typedData['timestampType']?.toString() ?? 'realTime';
+    
     // Parse timestamp
     DateTime timestamp;
-    if (typedData.containsKey('timestamp') && typedData['timestamp'] is int) {
-      timestamp = DateTime.fromMillisecondsSinceEpoch(typedData['timestamp'] as int);
+    if (typedData.containsKey('timestamp')) {
+      if (timestampType == 'deviceTime' && typedData['timestamp'] is int) {
+        // Record first connection if needed
+        recordDeviceFirstConnection(deviceId);
+        
+        // Convert device time to real time
+        timestamp = deviceTimeToRealTime(deviceId, typedData['timestamp'] as int);
+      } else if (typedData['timestamp'] is int) {
+        timestamp = DateTime.fromMillisecondsSinceEpoch(typedData['timestamp'] as int);
+      } else {
+        timestamp = DateTime.now();
+      }
     } else {
       timestamp = DateTime.now();
     }
     
     return SmartPlugData(
-      deviceId: typedData['deviceId']?.toString() ?? '',
+      deviceId: deviceId,
       relayState: typedData['relayState'] as bool? ?? false,
       current: (typedData['current'] as num?)?.toDouble() ?? 0.0,
       voltage: (typedData['voltage'] as num?)?.toDouble() ?? 220.0,
@@ -203,7 +266,26 @@ class SmartPlugData {
       timestamp: timestamp,
       isOnline: typedData['isOnline'] as bool? ?? true,
       rssi: (typedData['rssi'] as num?)?.toInt() ?? -50,
+      timestampType: timestampType,
     );
+  }
+  
+  /// Helper method to parse doubles safely
+  static double? _parseDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value);
+    return null;
+  }
+
+  /// Helper method to parse integers safely
+  static int? _parseInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is double) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 }
 

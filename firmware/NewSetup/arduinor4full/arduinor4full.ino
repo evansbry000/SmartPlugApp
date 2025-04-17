@@ -15,13 +15,16 @@
  * - ArduinoHttpClient (Arduino)
  * - Timer (Michael Contreras)
  * - EEPROM (Built-in)
+ * - RTC (Built-in)
  */
 
 #include <WiFiS3.h>
 #include <ArduinoJson.h>
-#include <ArduinoHttpClient.h>
 #include <arduino-timer.h>
 #include <EEPROM.h>
+
+// Add debug flag at the top of the file after the includes
+#define DEBUG_MODE false  // Set to true for verbose debugging output
 
 // Device Configuration
 #define DEVICE_ID "plug1"              // Unique identifier for this device
@@ -43,8 +46,8 @@
 #define MAX_CURRENT 3.0              // Maximum allowable current (A)
 
 // WiFi credentials
-const char* WIFI_SSID = "FatLARDbev";
-const char* WIFI_PASSWORD = "fatlardr6";
+const char* WIFI_SSID = "Corner Office";
+const char* WIFI_PASSWORD = "WhyweeAlecBev";
 
 // Firebase settings
 const char* FIREBASE_HOST = "smartplugdatabase-f1fd4-default-rtdb.firebaseio.com";
@@ -57,9 +60,9 @@ const char* FIREBASE_API_KEY = "AIzaSyCDETZaO4KfbuahJuCrvupJgo4nFPvkA8E";  // We
 #define EEPROM_ENERGY_ADDR 100
 
 // Data update intervals
-const unsigned long STATUS_UPDATE_INTERVAL = 1500;    // 5 seconds for normal status updates
+const unsigned long STATUS_UPDATE_INTERVAL = 1500;    // 1.5 seconds for normal status updates
 const unsigned long SENSOR_READ_INTERVAL = 1000;       // 1 second for sensor readings
-const unsigned long COMMAND_CHECK_INTERVAL = 5000;     // 5 seconds for command checking
+const unsigned long COMMAND_CHECK_INTERVAL = 1500;     // Changed from 5000 to 1500 to match status updates
 const unsigned long ENERGY_SAVE_INTERVAL = 300000;     // 5 minutes for saving energy data to EEPROM
 
 // Global variables for sensor readings
@@ -74,6 +77,9 @@ unsigned long lastEnergyCalculation = 0;
 unsigned long uptime = 0;
 unsigned long lastUptimeUpdate = 0;
 
+// Add this variable
+unsigned long deviceStartTime = 0;
+
 // Structure for persistent configuration
 struct DeviceConfig {
   byte initialized;
@@ -83,10 +89,6 @@ struct DeviceConfig {
 };
 
 DeviceConfig config;
-
-// Connection objects
-WiFiSSLClient wifiSSLClient;  // Using WiFiSSLClient for secure connections
-HttpClient httpClient(wifiSSLClient, FIREBASE_HOST, 443);  // Using port 443 for HTTPS
 
 // Timer for scheduled tasks
 Timer<5> timer;
@@ -101,17 +103,288 @@ bool saveEnergyData(void *);
 void loadConfigFromEEPROM();
 void saveConfigToEEPROM();
 void connectToWiFi();
-void configTime();
 void processRelay(bool state);
 void sendEventToFirebase(const char* eventType, const char* message);
 void calculateEnergy();
 void resetDailyEnergy();
+unsigned long getDeviceTime();
+void initializeCommandState();
+
+// After the includes, add this function for direct Firebase communication
+#include <WiFiS3.h>
+#include <ArduinoJson.h>
+#include <arduino-timer.h>
+#include <EEPROM.h>
+
+// Replace the HttpClient with direct WiFiSSLClient usage
+// Remove this line: HttpClient httpClient(wifiSSLClient, FIREBASE_HOST, 443);
+
+// Debug settings
+#define DEBUG_MODE true
+#define FIREBASE_PORT 443
+
+// Add direct communication functions
+bool firebaseGet(const String& path, String& response) {
+  WiFiSSLClient client;
+  
+  // Already simplified, no need for a message here now
+  
+  if (DEBUG_MODE) {
+    Serial.print("Connecting to Firebase: ");
+    Serial.println(FIREBASE_HOST);
+  }
+  
+  if (!client.connect(FIREBASE_HOST, FIREBASE_PORT)) {
+    Serial.println("WiFi: Connection to Firebase failed");
+    return false;
+  }
+  
+  if (DEBUG_MODE) {
+    Serial.print("GET: ");
+    Serial.println(path);
+  }
+
+  // Send HTTP request with simplified headers
+  client.print("GET ");
+  client.print(path);
+  client.println(" HTTP/1.1");
+  client.print("Host: ");
+  client.println(FIREBASE_HOST);
+  client.println("Connection: close");
+  client.println();
+  
+  // Allocate a large buffer for the response
+  const int bufSize = 2048;
+  char buffer[bufSize];
+  int pos = 0;
+  memset(buffer, 0, bufSize);
+  
+  // Wait for server response (longer timeout)
+  unsigned long timeout = millis() + 15000; // 15 seconds timeout
+  while (millis() < timeout) {
+    // Process incoming data while available
+    while (client.available()) {
+      char c = client.read();
+      
+      // Store in buffer if space available
+      if (pos < bufSize - 1) {
+        buffer[pos++] = c;
+      }
+    }
+    
+    // If disconnected and we have data, we're done
+    if (!client.connected() && pos > 0) {
+      break;
+    }
+    
+    delay(10); // Small delay
+  }
+  
+  // Close connection
+  client.stop();
+  
+  // Success criteria: we got some data
+  if (pos > 0) {
+    buffer[pos] = '\0'; // Ensure null-termination
+    String fullResponse = String(buffer);
+    
+    // Now extract just the JSON body, skipping HTTP headers
+    int bodyStart = fullResponse.indexOf("\r\n\r\n");
+    if (bodyStart > 0) {
+      // Skip the empty line sequence (4 chars: \r\n\r\n)
+      response = fullResponse.substring(bodyStart + 4);
+      
+      if (DEBUG_MODE) {
+        Serial.print("Response body extracted, length: ");
+        Serial.println(response.length());
+        Serial.print("Body content: ");
+        Serial.println(response);
+      }
+      
+      return true;
+    } else {
+      if (DEBUG_MODE) {
+        Serial.println("Could not find body separator. Raw response:");
+        Serial.println(fullResponse);
+      } else {
+        Serial.println("WiFi: Response format error");
+      }
+      return false;
+    }
+  } else {
+    Serial.println("WiFi: No data received within timeout");
+    return false;
+  }
+}
+
+bool firebasePut(const String& path, const String& jsonData) {
+  WiFiSSLClient client;
+  bool success = false;
+  unsigned long timeout = millis() + 10000; // 10 second timeout
+  
+  if (DEBUG_MODE) {
+    Serial.print("Connecting to Firebase: ");
+    Serial.println(FIREBASE_HOST);
+  }
+  
+  if (client.connect(FIREBASE_HOST, FIREBASE_PORT)) {
+    if (DEBUG_MODE) {
+      Serial.print("PUT: ");
+      Serial.println(path);
+    }
+    
+    // Send HTTP request
+    client.print("PUT ");
+    client.print(path);
+    client.println(" HTTP/1.1");
+    client.print("Host: ");
+    client.println(FIREBASE_HOST);
+    client.println("Content-Type: application/json");
+    client.print("Content-Length: ");
+    client.println(jsonData.length());
+    client.println("Connection: close");
+    client.println();
+    client.println(jsonData);
+    
+    // Wait for response with timeout
+    while (client.connected() && millis() < timeout) {
+      if (client.available()) {
+        String line = client.readStringUntil('\n');
+        if (DEBUG_MODE) {
+          Serial.println(line);
+        }
+        
+        // Check if the response starts with HTTP/1.1 2
+        if (line.startsWith("HTTP/1.1 2")) {
+          success = true;
+        }
+        
+        // Look for the empty line
+        if (line == "\r") {
+          break;
+        }
+      }
+      delay(10);
+    }
+    
+    // Read the rest of the response if needed
+    if (DEBUG_MODE) {
+      while (client.available()) {
+        String line = client.readStringUntil('\n');
+        Serial.println(line);
+      }
+    }
+    
+    client.stop();
+    
+    if (success) {
+      if (DEBUG_MODE) {
+        Serial.println("PUT operation successful");
+      }
+    } else {
+      Serial.println("WiFi: PUT operation failed");
+    }
+  } else {
+    Serial.println("WiFi: Connection to Firebase failed");
+  }
+  
+  return success;
+}
+
+bool firebasePost(const String& path, const String& jsonData) {
+  WiFiSSLClient client;
+  bool success = false;
+  unsigned long timeout = millis() + 10000; // 10 second timeout
+  
+  Serial.print("Connecting to Firebase: ");
+  Serial.println(FIREBASE_HOST);
+  
+  if (client.connect(FIREBASE_HOST, FIREBASE_PORT)) {
+    Serial.print("POST: ");
+    Serial.println(path);
+    
+    // Send HTTP request
+    client.print("POST ");
+    client.print(path);
+    client.println(" HTTP/1.1");
+    client.print("Host: ");
+    client.println(FIREBASE_HOST);
+    client.println("Content-Type: application/json");
+    client.print("Content-Length: ");
+    client.println(jsonData.length());
+    client.println("Connection: close");
+    client.println();
+    client.println(jsonData);
+    
+    // Wait for response with timeout
+    while (client.connected() && millis() < timeout) {
+      if (client.available()) {
+        String line = client.readStringUntil('\n');
+        if (DEBUG_MODE) {
+          Serial.println(line);
+        }
+        
+        // Check if the response starts with HTTP/1.1 2
+        if (line.startsWith("HTTP/1.1 2")) {
+          success = true;
+        }
+        
+        // Look for the empty line
+        if (line == "\r") {
+          break;
+        }
+      }
+      delay(10);
+    }
+    
+    // Read the rest of the response if needed
+    if (DEBUG_MODE) {
+      while (client.available()) {
+        String line = client.readStringUntil('\n');
+        Serial.println(line);
+      }
+    }
+    
+    client.stop();
+    
+    if (success) {
+      Serial.println("POST operation successful");
+    } else {
+      Serial.println("POST operation failed");
+    }
+  } else {
+    Serial.println("Connection to Firebase failed");
+  }
+  
+  return success;
+}
+
+// Function to check if WiFi is properly connected with valid IP
+bool checkWiFiConnection() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+  
+  // Check for valid IP address
+  IPAddress ip = WiFi.localIP();
+  if (ip[0] == 0) {
+    return false;
+  }
+  
+  return true;
+}
+
+// Update timeout value to allow more time for slow connections
+#define HTTP_TIMEOUT 30000   // 30 seconds
 
 void setup() {
   // Initialize serial communication
   Serial.begin(115200);
   delay(1000);
   Serial.println("\nArduino R4 WiFi - Smart Plug Starting...");
+  
+  // Record device start time
+  deviceStartTime = millis();
   
   // Initialize EEPROM and load saved configuration
   EEPROM.begin(); // No size parameter needed for Arduino R4
@@ -121,15 +394,17 @@ void setup() {
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(STATUS_LED_PIN, OUTPUT);
   
-  // Initialize relay to OFF state
-  digitalWrite(RELAY_PIN, LOW);
+  // Initialize relay to OFF state (HIGH for active-low relay)
+  digitalWrite(RELAY_PIN, HIGH);
   relayState = false;
   
   // Connect to WiFi
   connectToWiFi();
   
-  // Set longer timeout for HTTPS requests
-  httpClient.setTimeout(10000);  // 10 second timeout
+  // No more time synchronization attempts
+  
+  // Initialize command state in Firebase to match physical relay state
+  initializeCommandState();
   
   // Send startup event
   sendEventToFirebase("system", "STARTUP");
@@ -164,13 +439,14 @@ void loop() {
     uptime += (currentMillis - lastUptimeUpdate) / 1000;
     lastUptimeUpdate = currentMillis;
     
-    // Check if it's time for daily energy reset (at midnight)
-    // This is a simple implementation - a real-world device would use
-    // an RTC or NTP time synchronization for accurate timing
-    if (uptime % 86400 == 0) {  // 86400 seconds = 24 hours
+    // Check if it's time for daily energy reset (based on uptime instead of real time)
+    // Reset every 24 hours of uptime
+    if (uptime % 86400 == 0 && uptime > 0) {
       resetDailyEnergy();
     }
   }
+  
+  // No more time synchronization in the loop
   
   // Calculate energy consumption
   calculateEnergy();
@@ -215,7 +491,7 @@ bool readSensors(void *) {
   if(current < .15){
     current=0;
   }
-  Serial.println(current);
+  
   // Set minimum threshold to filter noise
   if (abs(current) < 0.1) {
     current = 0.0;
@@ -242,94 +518,130 @@ bool readSensors(void *) {
 }
 
 bool checkCommands(void *) {
-  if (WiFi.status() != WL_CONNECTED) {
-    return true;  // Skip if no WiFi connection
-  }
-  
-  // Check for valid IP
-  IPAddress ip = WiFi.localIP();
-  if (ip[0] == 0) {
+  if (!checkWiFiConnection()) {
+    if (DEBUG_MODE) {
+      Serial.println("Command check skipped: WiFi not properly connected");
+    }
     return true;
   }
   
   // Path for relay commands
   String path = "/devices/" + String(DEVICE_ID) + "/commands/relay.json";
-  path += "?auth=" + String(FIREBASE_API_KEY);
+  String pathWithAuth = path + "?auth=" + String(FIREBASE_API_KEY);
   
-  // Send HTTP GET request
-  httpClient.connectionKeepAlive(); // Keep connection open
-  httpClient.setTimeout(15000);     // 15 second timeout
-  
-  httpClient.beginRequest();
-  httpClient.get(path);
-  httpClient.endRequest();
-  
-  // Get response
-  int statusCode = httpClient.responseStatusCode();
-  String response = httpClient.responseBody();
-  
-  if (statusCode == 200 && response != "null") {
-    // Parse JSON response
-    DynamicJsonDocument doc(256);
-    DeserializationError error = deserializeJson(doc, response);
-    
-    if (!error) {
-      // Check if there is a command not yet processed
-      if (doc.containsKey("state") && !doc["processed"]) {
-        bool newState = doc["state"].as<bool>();
+  String response = "";
+  if (firebaseGet(pathWithAuth, response)) {
+    if (response != "null" && response.length() > 5) {
+      // Parse JSON response
+      DynamicJsonDocument doc(512);
+      DeserializationError error = deserializeJson(doc, response);
+      
+      if (!error) {
+        if (DEBUG_MODE) {
+          Serial.print("Parsed JSON: ");
+          serializeJson(doc, Serial);
+          Serial.println();
+        }
         
-        if (newState != relayState) {
-          Serial.print("Relay command received: ");
-          Serial.println(newState ? "ON" : "OFF");
-          
-          // Update relay state (unless emergency shutdown is active)
-          if (!emergencyShutdown || !newState) {
-            processRelay(newState);
-          } else {
-            Serial.println("Command rejected due to emergency shutdown");
-            sendEventToFirebase("command", "REJECTED_EMERGENCY");
+        // Check if there is a command not yet processed
+        if (doc.containsKey("state")) {
+          if (DEBUG_MODE) {
+            Serial.print("Command state field exists: ");
+            Serial.println(doc["state"].as<bool>() ? "ON" : "OFF");
           }
           
-          // Mark command as processed
-          DynamicJsonDocument ackDoc(256);
-          ackDoc["state"] = relayState;
-          ackDoc["processed"] = true;
-          ackDoc["timestamp"] = millis();
-          
-          String ackJson;
-          serializeJson(ackDoc, ackJson);
-          
-          // Send acknowledgment
-          httpClient.beginRequest();
-          httpClient.put(path);
-          httpClient.sendHeader("Content-Type", "application/json");
-          httpClient.sendHeader("Connection", "keep-alive");
-          httpClient.sendHeader("Content-Length", ackJson.length());
-          httpClient.beginBody();
-          httpClient.print(ackJson);
-          httpClient.endRequest();
+          if (!doc["processed"]) {
+            bool newState = doc["state"].as<bool>();
+            Serial.print("Command: Relay ");
+            Serial.println(newState ? "ON" : "OFF");
+            
+            if (newState != relayState) {
+              // Update relay state (unless emergency shutdown is active)
+              if (!emergencyShutdown || !newState) {
+                // CRITICAL CHANGE: Send acknowledgment BEFORE processing the relay
+                // to improve app UI responsiveness
+                DynamicJsonDocument ackDoc(256);
+                ackDoc["state"] = newState; // Use the new state here, not the current relayState
+                ackDoc["processed"] = true;
+                
+                // Use device uptime for timestamp
+                ackDoc["timestamp"] = getDeviceTime();
+                ackDoc["timestampType"] = "deviceTime"; // Indicate this is device time, not real time
+                
+                String ackJson;
+                serializeJson(ackDoc, ackJson);
+                
+                // Send acknowledgment FIRST
+                Serial.println("Command: Acknowledging");
+                if (firebasePut(pathWithAuth, ackJson)) {
+                  // Now process the relay after the acknowledgment is sent
+                  processRelay(newState);
+                  // Moved after relay activation
+                  Serial.println("Command: Acknowledged");
+                } else {
+                  // Still process the relay even if acknowledgment fails
+                  processRelay(newState);
+                  Serial.println("Command: Failed to acknowledge");
+                }
+              } else {
+                Serial.println("Command: Rejected (emergency shutdown)");
+                sendEventToFirebase("command", "REJECTED_EMERGENCY");
+              }
+            } else {
+              // Still need to acknowledge even if state doesn't change
+              DynamicJsonDocument ackDoc(256);
+              ackDoc["state"] = relayState;
+              ackDoc["processed"] = true;
+              ackDoc["timestamp"] = getDeviceTime();
+              ackDoc["timestampType"] = "deviceTime";
+              
+              String ackJson;
+              serializeJson(ackDoc, ackJson);
+              
+              // Send acknowledgment
+              if (firebasePut(pathWithAuth, ackJson)) {
+                Serial.println("Command: Acknowledged (no change needed)");
+              }
+            }
+          } else {
+            if (DEBUG_MODE) {
+              Serial.println("Command already processed, skipping");
+            }
+          }
+        } else {
+          if (DEBUG_MODE) {
+            Serial.println("No 'state' field in command JSON");
+          }
         }
+      } else {
+        Serial.print("Error: JSON parsing error: ");
+        Serial.println(error.c_str());
+      }
+    } else if (response == "null") {
+      if (DEBUG_MODE) {
+        Serial.println("No command found (null response)");
       }
     }
-  } else if (statusCode != 200) {
-    Serial.print("Command check failed with code: ");
-    Serial.println(statusCode);
+  } else {
+    if (DEBUG_MODE) {
+      Serial.println("Failed to check for commands");
+    }
   }
   
   return true;
 }
 
 bool updateStatus(void *) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Status update skipped: WiFi not connected");
-    return true;  // Skip if no WiFi connection
+  if (!checkWiFiConnection()) {
+    if (DEBUG_MODE) {
+      Serial.println("Status update skipped: WiFi not properly connected");
+    }
+    return true;
   }
   
-  // Check for valid IP
-  IPAddress ip = WiFi.localIP();
-  if (ip[0] == 0) {
-    Serial.println("Status update skipped: Invalid IP address");
-    return true;
+  // Only print status update message in debug mode
+  if (DEBUG_MODE) {
+    Serial.println("Status: Sending update");
   }
   
   // Create JSON payload
@@ -343,7 +655,11 @@ bool updateStatus(void *) {
   jsonBuffer["deviceState"] = deviceState;
   jsonBuffer["emergencyShutdown"] = emergencyShutdown;
   jsonBuffer["uptime"] = uptime;
-  jsonBuffer["timestamp"] = millis();
+  
+  // Use device uptime for timestamp
+  jsonBuffer["timestamp"] = getDeviceTime();
+  jsonBuffer["timestampType"] = "deviceTime"; // Indicate this is device time, not real time
+  
   jsonBuffer["ipAddress"] = WiFi.localIP().toString();
   jsonBuffer["rssi"] = WiFi.RSSI();
   jsonBuffer["firmwareVersion"] = FIRMWARE_VERSION;
@@ -356,39 +672,21 @@ bool updateStatus(void *) {
   String path = "/devices/" + String(DEVICE_ID) + "/status.json";
   path += "?auth=" + String(FIREBASE_API_KEY);
   
-  // Send HTTP PUT request
-  httpClient.connectionKeepAlive(); // Keep connection open
-  httpClient.setTimeout(15000);     // 15 second timeout
-  
-  httpClient.beginRequest();
-  httpClient.put(path);
-  httpClient.sendHeader("Content-Type", "application/json");
-  httpClient.sendHeader("Connection", "keep-alive");
-  httpClient.sendHeader("Content-Length", jsonStr.length());
-  httpClient.beginBody();
-  httpClient.print(jsonStr);
-  httpClient.endRequest();
-  
-  int statusCode = httpClient.responseStatusCode();
-  
-  if (statusCode == 200) {
-    Serial.println("Status update sent successfully");
+  if (firebasePut(path, jsonStr)) {
+    if (DEBUG_MODE) {
+      Serial.println("Status update sent successfully");
+    }
   } else {
-    Serial.print("Status update failed with code: ");
-    Serial.println(statusCode);
+    Serial.println("WiFi: Status update failed");
     
-    // If we're getting auth errors repeatedly, try resetting the connection
-    if (statusCode == 401) {
-      static int authErrorCount = 0;
-      authErrorCount++;
-      
-      if (authErrorCount >= 3) {
-        Serial.println("Multiple authorization errors. Resetting connection...");
-        WiFi.disconnect();
-        delay(1000);
-        connectToWiFi();
-        authErrorCount = 0;
-      }
+    // Try reconnecting to WiFi if status update fails
+    static int failureCount = 0;
+    failureCount++;
+    
+    if (failureCount >= 3) {
+      Serial.println("WiFi: Multiple failures. Resetting connection...");
+      connectToWiFi();
+      failureCount = 0;
     }
   }
   
@@ -401,6 +699,7 @@ bool checkSafety(void *) {
   // Check for over-temperature condition
   if (temperature > TEMP_THRESHOLD) {
     emergencyShutdown = true;
+    Serial.println("Temperature Over Max Threshold");
     if (relayState) {
       processRelay(false);  // Turn off relay
       sendEventToFirebase("emergency", "OVER_TEMPERATURE");
@@ -460,16 +759,23 @@ void saveConfigToEEPROM() {
   EEPROM.put(EEPROM_CONFIG_ADDR, config);
 }
 
+// Update the connectToWiFi function for better reliability
 void connectToWiFi() {
   // Disconnect if connected
   if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("WiFi: Disconnecting from previous connection");
     WiFi.disconnect();
     delay(1000);
   }
   
-  Serial.print("Connecting to WiFi...");
+  Serial.print("WiFi: Connecting to ");
+  Serial.println(WIFI_SSID);
   
-  // Begin WiFi connection - WiFiS3 doesn't use mode()
+  // Reset WiFi hardware first
+  WiFi.end();
+  delay(1000);
+  
+  // Begin WiFi connection
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
   // Wait for connection (with timeout)
@@ -493,39 +799,78 @@ void connectToWiFi() {
   // Check connection status
   if (connected) {
     Serial.println();
-    Serial.print("Connected! IP address: ");
+    Serial.print("WiFi: Connected! IP: ");
     Serial.println(WiFi.localIP());
+    Serial.print("WiFi: Signal strength: ");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
     
-    // Synchronize time
-    Serial.println("Synchronizing time...");
-    configTime();
+    // Try a basic HTTP request to check internet connectivity
+    if (DEBUG_MODE) {
+      Serial.println("Testing internet connectivity...");
+      
+      // Simple test to google.com
+      WiFiSSLClient testClient;
+      if (testClient.connect("www.google.com", 443)) {
+        Serial.println("Internet connection confirmed");
+        testClient.stop();
+      } else {
+        Serial.println("Internet connectivity might be limited");
+      }
+    }
     
     // Delay before first Firebase connection to ensure network is stable
     delay(2000);
   } else {
     Serial.println();
-    Serial.println("Failed to connect to WiFi or obtain valid IP. Will retry later.");
+    Serial.println("WiFi: Failed to connect or obtain valid IP");
+    // Print the WiFi status code for debugging
+    int status = WiFi.status();
+    
+    // Try to print status meaning
+    Serial.print("WiFi status: ");
+    switch(status) {
+      case WL_CONNECTED: 
+        Serial.println("Connected");
+        break;
+      case WL_IDLE_STATUS:
+        Serial.println("Idle");
+        break;
+      case WL_NO_SSID_AVAIL:
+        Serial.println("SSID not available");
+        break;
+      case WL_SCAN_COMPLETED:
+        Serial.println("Scan completed");
+        break;
+      case WL_CONNECT_FAILED:
+        Serial.println("Connection failed");
+        break;
+      case WL_CONNECTION_LOST:
+        Serial.println("Connection lost");
+        break;
+      case WL_DISCONNECTED:
+        Serial.println("Disconnected");
+        break;
+      default:
+        Serial.println("Unknown");
+    }
   }
-}
-
-void configTime() {
-  // Get time from NTP server
-  WiFi.getTime();
-  delay(1000);
 }
 
 void processRelay(bool state) {
   // Don't allow turning on if in emergency mode
   if (emergencyShutdown && state) {
-    Serial.println("Cannot turn relay ON during emergency shutdown");
+    Serial.println("Relay: Cannot turn ON during emergency shutdown");
     return;
   }
   
-  // Set relay state
-  digitalWrite(RELAY_PIN, state ? HIGH : LOW);
+  // Set relay state - INVERTED LOGIC for active-low relay
+  // When state is TRUE (ON), we set pin LOW to activate the relay
+  // When state is FALSE (OFF), we set pin HIGH to deactivate the relay
+  digitalWrite(RELAY_PIN, state ? LOW : HIGH);
   relayState = state;
   
-  Serial.print("Relay set to: ");
+  Serial.print("Relay: ");
   Serial.println(state ? "ON" : "OFF");
   
   // Send event to Firebase
@@ -533,15 +878,8 @@ void processRelay(bool state) {
 }
 
 void sendEventToFirebase(const char* eventType, const char* message) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("Cannot send event: WiFi not connected");
-    return;  // Skip if no WiFi connection
-  }
-  
-  // Check for valid IP
-  IPAddress ip = WiFi.localIP();
-  if (ip[0] == 0) {
-    Serial.println("Cannot send event: Invalid IP address");
+  if (!checkWiFiConnection()) {
+    Serial.println("Cannot send event: WiFi not properly connected");
     return;
   }
   
@@ -549,7 +887,10 @@ void sendEventToFirebase(const char* eventType, const char* message) {
   DynamicJsonDocument jsonBuffer(512);
   jsonBuffer["type"] = eventType;
   jsonBuffer["message"] = message;
-  jsonBuffer["timestamp"] = millis();
+  
+  // Use device uptime for timestamp
+  jsonBuffer["timestamp"] = getDeviceTime();
+  jsonBuffer["timestampType"] = "deviceTime"; // Indicate this is device time, not real time
   
   // Add additional data based on event type
   if (strcmp(eventType, "emergency") == 0) {
@@ -567,29 +908,13 @@ void sendEventToFirebase(const char* eventType, const char* message) {
   String path = "/events/" + String(DEVICE_ID) + ".json";
   path += "?auth=" + String(FIREBASE_API_KEY);
   
-  // Use HTTP POST for events
-  httpClient.connectionKeepAlive(); // Keep connection open
-  httpClient.setTimeout(15000);     // 15 second timeout
-  
-  httpClient.beginRequest();
-  httpClient.post(path);
-  httpClient.sendHeader("Content-Type", "application/json");
-  httpClient.sendHeader("Connection", "keep-alive");
-  httpClient.sendHeader("Content-Length", jsonStr.length());
-  httpClient.beginBody();
-  httpClient.print(jsonStr);
-  httpClient.endRequest();
-  
-  int statusCode = httpClient.responseStatusCode();
-  
-  if (statusCode == 200) {
+  if (firebasePost(path, jsonStr)) {
     Serial.print("Event sent: ");
     Serial.print(eventType);
     Serial.print(" - ");
     Serial.println(message);
   } else {
-    Serial.print("Event send failed with code: ");
-    Serial.println(statusCode);
+    Serial.println("Failed to send event");
   }
 }
 
@@ -642,4 +967,42 @@ float getVPP() {
   // Calculate peak-to-peak voltage
   float result = ((maxValue - minValue) * 5.0)/1024.0;
   return result;
+}
+
+// Return device uptime in milliseconds, for use in timestamps
+unsigned long getDeviceTime() {
+  return millis() - deviceStartTime;
+}
+
+// Initialize the command state in Firebase to match the physical relay state
+void initializeCommandState() {
+  if (!checkWiFiConnection()) {
+    Serial.println("Cannot initialize command state: WiFi not properly connected");
+    return;
+  }
+  
+  Serial.println("Initializing command state in Firebase...");
+  
+  // Path for relay commands
+  String path = "/devices/" + String(DEVICE_ID) + "/commands/relay.json";
+  path += "?auth=" + String(FIREBASE_API_KEY);
+  
+  // Create JSON payload with relay initialized to OFF
+  DynamicJsonDocument jsonBuffer(256);
+  jsonBuffer["state"] = false;       // Relay starts in OFF state
+  jsonBuffer["processed"] = true;    // Marked as processed so it won't trigger again
+  
+  // Use device uptime for timestamp
+  jsonBuffer["timestamp"] = getDeviceTime();
+  jsonBuffer["timestampType"] = "deviceTime"; // Indicate this is device time, not real time
+  
+  // Serialize JSON
+  String jsonStr;
+  serializeJson(jsonBuffer, jsonStr);
+  
+  if (firebasePut(path, jsonStr)) {
+    Serial.println("Command state initialized successfully");
+  } else {
+    Serial.println("Failed to initialize command state");
+  }
 }

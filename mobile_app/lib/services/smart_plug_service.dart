@@ -138,7 +138,7 @@ class SmartPlugService extends ChangeNotifier {
         _deviceConnectionStreamController.add(_deviceConnectionState);
         
         // Parse data
-        final smartPlugData = SmartPlugData.fromRealtimeDb(data);
+        final smartPlugData = SmartPlugData.fromRealtimeDb(deviceId: deviceId, data: data);
         
         // Update cache
         _deviceDataCache[deviceId] = smartPlugData;
@@ -169,22 +169,51 @@ class SmartPlugService extends ChangeNotifier {
   
   // Toggle relay for a device
   Future<bool> toggleRelay(String deviceId) async {
-    if (_auth.currentUser == null) return false;
+    debugPrint('SmartPlugService: toggleRelay called for device $deviceId');
+    
+    if (_auth.currentUser == null) {
+      debugPrint('SmartPlugService: Cannot toggle relay - User not authenticated');
+      return false;
+    }
     
     // Get current state to toggle
     final currentState = _deviceDataCache[deviceId]?.relayState ?? false;
     final newState = !currentState;
+    debugPrint('SmartPlugService: Toggling relay from $currentState to $newState');
     
     try {
       final commandRef = _database.ref('devices/$deviceId/commands/relay');
+      debugPrint('SmartPlugService: Writing to path: ${commandRef.path}');
       
-      await commandRef.set({
-        'state': newState,
-        'processed': false,
-        'timestamp': ServerValue.timestamp,
-      });
-      
-      return true;
+      // Try direct update (simpler and faster)
+      try {
+        await commandRef.set({
+          'state': newState,
+          'processed': false,
+          'timestamp': ServerValue.timestamp,
+        });
+        
+        debugPrint('SmartPlugService: Relay command successfully written to Firebase');
+        return true;
+      } catch (e) {
+        // If direct update fails, try a different approach
+        debugPrint('SmartPlugService: Direct update failed: $e');
+        
+        // Try to update specific fields
+        try {
+          await commandRef.update({
+            'state': newState,
+            'processed': false,
+            'timestamp': ServerValue.timestamp,
+          });
+          
+          debugPrint('SmartPlugService: Relay command successfully updated with update() method');
+          return true;
+        } catch (updateError) {
+          debugPrint('SmartPlugService: Update also failed: $updateError');
+          return false;
+        }
+      }
     } catch (e) {
       debugPrint('SmartPlugService: Error toggling relay: $e');
       return false;
@@ -205,5 +234,39 @@ class SmartPlugService extends ChangeNotifier {
     _deviceDataStreamController.close();
     _deviceConnectionStreamController.close();
     super.dispose();
+  }
+
+  // Add this method to test Firebase connectivity
+  Future<bool> testDatabaseConnection() async {
+    debugPrint('SmartPlugService: Testing Firebase RTDB connection...');
+    
+    if (_auth.currentUser == null) {
+      debugPrint('SmartPlugService: Cannot test - User not authenticated');
+      return false;
+    }
+    
+    try {
+      // Try writing to a test path
+      final testRef = _database.ref('connection_test/${_auth.currentUser!.uid}');
+      
+      await testRef.set({
+        'timestamp': ServerValue.timestamp,
+        'device': 'app',
+        'test': true
+      });
+      
+      // Try reading it back
+      final snapshot = await testRef.get();
+      if (snapshot.exists) {
+        debugPrint('SmartPlugService: Database connection test successful!');
+        return true;
+      } else {
+        debugPrint('SmartPlugService: Database write succeeded but read failed');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('SmartPlugService: Database connection test failed: $e');
+      return false;
+    }
   }
 } 

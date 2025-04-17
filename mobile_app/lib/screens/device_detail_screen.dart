@@ -246,30 +246,30 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
             Row(
               children: [
                 Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: isOnline
-                        ? () {
-                            final service = Provider.of<SmartPlugService>(
-                              context,
-                              listen: false,
-                            );
-                            service.toggleRelay(widget.deviceId);
-                          }
-                        : null,
-                    icon: Icon(
-                      deviceData.relayState
-                          ? Icons.power_settings_new
-                          : Icons.power_off_outlined,
-                    ),
-                    label: Text(deviceData.relayState ? 'Turn Off' : 'Turn On'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor:
-                          deviceData.relayState ? Colors.red : Colors.green,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
+                  child: _buildRelayButton(deviceData, isOnline),
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () async {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Testing Firebase connection...')),
+                );
+                
+                final service = Provider.of<SmartPlugService>(context, listen: false);
+                final success = await service.testDatabaseConnection();
+                
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(success 
+                      ? 'Firebase connection successful' 
+                      : 'Firebase connection failed. Check console for details.'),
+                    backgroundColor: success ? Colors.green : Colors.red,
+                  ),
+                );
+              },
+              child: const Text('Test Firebase Connection'),
             ),
           ],
         ),
@@ -277,22 +277,101 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
     );
   }
   
+  Widget _buildRelayButton(SmartPlugData deviceData, bool isOnline) {
+    return StatefulBuilder(
+      builder: (context, setState) {
+        bool isLoading = false;
+        
+        return ElevatedButton.icon(
+          onPressed: (isOnline && !isLoading)
+              ? () async {
+                  setState(() {
+                    isLoading = true;
+                  });
+                  
+                  try {
+                    final service = Provider.of<SmartPlugService>(
+                      context, 
+                      listen: false,
+                    );
+                    
+                    final success = await service.toggleRelay(widget.deviceId);
+                    
+                    if (success) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            deviceData.relayState 
+                                ? 'Turning device OFF...' 
+                                : 'Turning device ON...'
+                          ),
+                          duration: const Duration(seconds: 1),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Failed to send command'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  } catch (e) {
+                    debugPrint('Error toggling relay: $e');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Error: $e'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  } finally {
+                    if (mounted) {
+                      setState(() {
+                        isLoading = false;
+                      });
+                    }
+                  }
+                }
+              : null,
+          icon: isLoading 
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+              : Icon(
+                  deviceData.relayState
+                      ? Icons.power_settings_new
+                      : Icons.power_off_outlined,
+                ),
+          label: Text(deviceData.relayState ? 'Turn Off' : 'Turn On'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor:
+                deviceData.relayState ? Colors.red : Colors.green,
+            foregroundColor: Colors.white,
+          ),
+        );
+      },
+    );
+  }
+  
   Widget _buildDeviceInfoList(SmartPlugData data, bool isOnline) {
     final timestamp = data.timestamp;
-    final formattedTime =
-        '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}:${timestamp.second.toString().padLeft(2, '0')}';
-    final formattedDate =
-        '${timestamp.year}-${timestamp.month.toString().padLeft(2, '0')}-${timestamp.day.toString().padLeft(2, '0')}';
+    final formattedDateTime = _formatTimestamp(timestamp);
     
     return Column(
       children: [
         _buildInfoRow('Status', isOnline ? 'Online' : 'Offline'),
         _buildInfoRow('Power', '${data.power.toStringAsFixed(2)} W'),
         _buildInfoRow('Current', '${data.current.toStringAsFixed(2)} A'),
-        _buildInfoRow('Temperature', '${data.temperature.toStringAsFixed(1)}°C'),
+        _buildInfoRow('Temperature', '${data.temperature}°C'),
         _buildInfoRow('Relay', data.relayState ? 'ON' : 'OFF'),
         _buildInfoRow('Signal Strength', '${data.rssi} dBm'),
-        _buildInfoRow('Last Updated', '$formattedDate $formattedTime'),
+        _buildInfoRow('Last Updated', formattedDateTime),
       ],
     );
   }
@@ -321,5 +400,52 @@ class _DeviceDetailScreenState extends State<DeviceDetailScreen> {
         ],
       ),
     );
+  }
+  
+  // Format timestamp to human-readable string with timezone adjustment
+  String _formatTimestamp(DateTime timestamp) {
+    // Convert to Central Time
+    final centralTime = _toCentralTime(timestamp);
+    
+    // Format date and time
+    return '${centralTime.year}-'
+        '${centralTime.month.toString().padLeft(2, '0')}-'
+        '${centralTime.day.toString().padLeft(2, '0')} '
+        '${centralTime.hour.toString().padLeft(2, '0')}:'
+        '${centralTime.minute.toString().padLeft(2, '0')}:'
+        '${centralTime.second.toString().padLeft(2, '0')}';
+  }
+  
+  // Convert UTC to Central Time (UTC-6, or UTC-5 during DST)
+  DateTime _toCentralTime(DateTime utcTime) {
+    final bool isDST = _isInDST(utcTime);
+    final int offsetHours = isDST ? -5 : -6; // Central Time offset
+    
+    return utcTime.toUtc().add(Duration(hours: offsetHours));
+  }
+  
+  // Simple DST check for U.S. Central Time
+  // DST starts second Sunday in March, ends first Sunday in November
+  bool _isInDST(DateTime dateTime) {
+    final int year = dateTime.year;
+    
+    // Find second Sunday in March
+    DateTime marchStart = DateTime.utc(year, 3, 1);
+    while (marchStart.weekday != DateTime.sunday) {
+      marchStart = marchStart.add(const Duration(days: 1));
+    }
+    marchStart = marchStart.add(const Duration(days: 7)); // Second Sunday
+    
+    // Find first Sunday in November
+    DateTime novEnd = DateTime.utc(year, 11, 1);
+    while (novEnd.weekday != DateTime.sunday) {
+      novEnd = novEnd.add(const Duration(days: 1));
+    }
+    
+    // DST is active from 2AM on second Sunday in March until 2AM on first Sunday in November
+    DateTime dstStart = DateTime.utc(year, marchStart.month, marchStart.day, 2);
+    DateTime dstEnd = DateTime.utc(year, novEnd.month, novEnd.day, 2);
+    
+    return dateTime.isAfter(dstStart) && dateTime.isBefore(dstEnd);
   }
 } 

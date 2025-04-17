@@ -133,14 +133,17 @@ class DeviceDataService {
     _connectionSubscriptions[deviceId]?.cancel();
     
     try {
+      // Record first connection time when starting to monitor
+      SmartPlugData.recordDeviceFirstConnection(deviceId);
+      
       // Set up data listener
-      final dataRef = _database.ref('devices/$deviceId/current_data');
+      final dataRef = _database.ref('devices/$deviceId/status');
       final dataSubscription = dataRef.onValue.listen((event) {
         if (event.snapshot.exists && event.snapshot.value is Map) {
-          final dataMap = Map<String, dynamic>.from(
+          final dataMap = Map<dynamic, dynamic>.from(
               event.snapshot.value as Map);
           
-          // Create SmartPlugData object
+          // Create SmartPlugData object, passing the deviceId
           final smartPlugData = SmartPlugData.fromRealtimeDb(
             deviceId: deviceId,
             data: dataMap,
@@ -458,5 +461,21 @@ class DeviceDataService {
     
     _isInitialized = false;
     debugPrint('DeviceDataService disposed');
+  }
+  
+  /// Get the device's first connection timestamp
+  DateTime getDeviceFirstConnection(String deviceId) {
+    return SmartPlugData.getDeviceFirstConnection(deviceId);
+  }
+  
+  /// Check if a device uses device time
+  bool deviceUsesDeviceTime(String deviceId) {
+    final deviceData = _deviceDataCache[deviceId];
+    return deviceData?.timestampType == 'deviceTime';
+  }
+  
+  /// Convert device time to real time
+  DateTime convertDeviceTimeToRealTime(String deviceId, int deviceTimeMs) {
+    return SmartPlugData.deviceTimeToRealTime(deviceId, deviceTimeMs);
   }
 } 

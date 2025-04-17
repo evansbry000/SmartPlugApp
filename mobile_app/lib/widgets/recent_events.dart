@@ -148,8 +148,10 @@ class RecentEvents extends StatelessWidget {
   }
   
   String _formatEventTime(DateTime time) {
-    final now = DateTime.now();
-    final difference = now.difference(time);
+    // Convert to Central Time
+    final centralTime = _toCentralTime(time);
+    final now = _toCentralTime(DateTime.now());
+    final difference = now.difference(centralTime);
     
     if (difference.inSeconds < 60) {
       return 'Just now';
@@ -157,9 +159,51 @@ class RecentEvents extends StatelessWidget {
       return '${difference.inMinutes}m ago';
     } else if (difference.inHours < 24) {
       return '${difference.inHours}h ago';
-    } else {
+    } else if (difference.inDays < 7) {
       return '${difference.inDays}d ago';
+    } else {
+      // For older events, show the actual date
+      return '${_getMonthAbbreviation(centralTime.month)} ${centralTime.day}, ${centralTime.hour.toString().padLeft(2, '0')}:${centralTime.minute.toString().padLeft(2, '0')}';
     }
+  }
+  
+  // Convert UTC to Central Time (UTC-6, or UTC-5 during DST)
+  DateTime _toCentralTime(DateTime utcTime) {
+    final bool isDST = _isInDST(utcTime);
+    final int offsetHours = isDST ? -5 : -6; // Central Time offset
+    
+    return utcTime.toUtc().add(Duration(hours: offsetHours));
+  }
+  
+  // Simple DST check for U.S. Central Time
+  // DST starts second Sunday in March, ends first Sunday in November
+  bool _isInDST(DateTime dateTime) {
+    final int year = dateTime.year;
+    
+    // Find second Sunday in March
+    DateTime marchStart = DateTime.utc(year, 3, 1);
+    while (marchStart.weekday != DateTime.sunday) {
+      marchStart = marchStart.add(const Duration(days: 1));
+    }
+    marchStart = marchStart.add(const Duration(days: 7)); // Second Sunday
+    
+    // Find first Sunday in November
+    DateTime novEnd = DateTime.utc(year, 11, 1);
+    while (novEnd.weekday != DateTime.sunday) {
+      novEnd = novEnd.add(const Duration(days: 1));
+    }
+    
+    // DST is active from 2AM on second Sunday in March until 2AM on first Sunday in November
+    DateTime dstStart = DateTime.utc(year, marchStart.month, marchStart.day, 2);
+    DateTime dstEnd = DateTime.utc(year, novEnd.month, novEnd.day, 2);
+    
+    return dateTime.isAfter(dstStart) && dateTime.isBefore(dstEnd);
+  }
+  
+  String _getMonthAbbreviation(int month) {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
+                    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return months[month - 1];
   }
 }
 
