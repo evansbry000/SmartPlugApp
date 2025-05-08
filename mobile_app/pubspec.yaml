@@ -9,19 +9,19 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  firebase_core: 2.15.1
+  firebase_core: ^2.15.1
   firebase_core_web: 2.7.0
   firebase_core_platform_interface: 4.8.0
-  firebase_auth: 4.9.0
+  firebase_auth: ^4.9.0
   firebase_auth_web: 5.8.0
-  cloud_firestore: 4.9.1
+  cloud_firestore: ^4.9.1
   cloud_firestore_web: 3.7.0
   cloud_firestore_platform_interface: 5.16.0
-  firebase_database: 10.2.5
-  firebase_messaging: 14.6.5
+  firebase_database: ^10.2.5
+  firebase_messaging: ^14.6.5
   firebase_messaging_web: 3.5.4
-  flutter_local_notifications: 14.1.1
-  provider: ^6.1.1
+  # flutter_local_notifications: ^16.0.0  # Temporarily commented out
+  provider: ^6.0.5
   intl: ^0.19.0
   shared_preferences: ^2.2.2
   js: ^0.6.7

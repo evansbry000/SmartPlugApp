@@ -148,6 +148,28 @@ class SmartPlugEvent {
     return map;
   }
   
+  /// Create a SmartPlugEvent from Realtime Database data
+  factory SmartPlugEvent.fromRTDB(String eventId, Map<String, dynamic> data) {
+    // Parse timestamp from data
+    DateTime timestamp;
+    if (data['timestamp'] is int) {
+      timestamp = DateTime.fromMillisecondsSinceEpoch(data['timestamp'] as int);
+    } else {
+      timestamp = DateTime.now();
+    }
+    
+    return SmartPlugEvent(
+      id: eventId,
+      deviceId: data['deviceId'] ?? '',
+      type: data['type'] ?? 'unknown',
+      timestamp: timestamp,
+      value: data['value'],
+      details: data['details'],
+      severity: data['severity'] ?? 'info',
+      acknowledged: false, // events from RTDB are not acknowledged by default
+    );
+  }
+  
   @override
   String toString() {
     return 'SmartPlugEvent{id: $id, deviceId: $deviceId, type: $type, timestamp: $timestamp, severity: $severity}';

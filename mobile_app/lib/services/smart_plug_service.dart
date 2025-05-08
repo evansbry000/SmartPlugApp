@@ -4,9 +4,10 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import '../models/smart_plug_data.dart';
+import 'data_mirroring_service.dart';
 
 /// Service that manages smart plug devices and their data.
-/// This simplified version directly connects to Firebase without using the other services.
+/// Uses DataMirroringService to maintain consistency between RTDB and Firestore.
 class SmartPlugService extends ChangeNotifier {
   // Firebase instances
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -15,6 +16,12 @@ class SmartPlugService extends ChangeNotifier {
     databaseURL: 'https://smartplugdatabase-f1fd4-default-rtdb.firebaseio.com',
   );
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  
+  // Data mirroring service
+  final DataMirroringService? _mirroringService;
+  
+  // Dependencies
+  final AuthService authService;
   
   // Data state
   bool _isLoading = true;
@@ -36,7 +43,8 @@ class SmartPlugService extends ChangeNotifier {
   SmartPlugData? get currentData => _deviceDataCache.isNotEmpty ? _deviceDataCache.values.first : null;
   List<String> get devices => List.unmodifiable(_devices);
   
-  SmartPlugService() {
+  SmartPlugService({required this.authService, DataMirroringService? mirroringService}) : 
+    _mirroringService = mirroringService {
     initialize();
   }
   
@@ -45,6 +53,9 @@ class SmartPlugService extends ChangeNotifier {
     notifyListeners();
     
     try {
+      // Initialize the mirroring service
+      await _mirroringService?.initialize();
+      
       // Listen for auth state changes
       _auth.authStateChanges().listen((User? user) {
         if (user != null) {
@@ -91,12 +102,18 @@ class SmartPlugService extends ChangeNotifier {
         final deviceId = doc.id;
         _devices.add(deviceId);
         await startListeningToDevice(deviceId);
+        
+        // Start mirroring for this device
+        await _mirroringService?.startMirroring(deviceId);
       }
       
       // If no devices found, at least try to listen to "plug1" for testing
       if (devicesSnapshot.docs.isEmpty) {
         _devices.add('plug1');
         await startListeningToDevice('plug1');
+        
+        // Start mirroring for default device
+        await _mirroringService?.startMirroring('plug1');
       }
       
       // Sort devices alphabetically
@@ -115,7 +132,7 @@ class SmartPlugService extends ChangeNotifier {
     await _dataSubscriptions[deviceId]?.cancel();
     
     // Set up subscription to current data
-    final dataRef = _database.ref('devices/$deviceId/status');
+    final dataRef = _database.ref('smart_plugs/$deviceId/status');
     
     _dataSubscriptions[deviceId] = dataRef.onValue.listen((event) {
       if (!event.snapshot.exists) {
@@ -143,6 +160,11 @@ class SmartPlugService extends ChangeNotifier {
         // Update cache
         _deviceDataCache[deviceId] = smartPlugData;
         _deviceDataStreamController.add(_deviceDataCache);
+        
+        // Start mirroring the data if the service is available
+        if (_mirroringService != null) {
+          _mirroringService!.startMirroring(deviceId);
+        }
         
         // Notify listeners
         notifyListeners();
@@ -182,7 +204,7 @@ class SmartPlugService extends ChangeNotifier {
     debugPrint('SmartPlugService: Toggling relay from $currentState to $newState');
     
     try {
-      final commandRef = _database.ref('devices/$deviceId/commands/relay');
+      final commandRef = _database.ref('smart_plugs/$deviceId/commands/relay');
       debugPrint('SmartPlugService: Writing to path: ${commandRef.path}');
       
       // Try direct update (simpler and faster)
@@ -226,6 +248,11 @@ class SmartPlugService extends ChangeNotifier {
       subscription.cancel();
     }
     _dataSubscriptions.clear();
+    
+    // Stop mirroring for all devices
+    for (final deviceId in _devices) {
+      _mirroringService?.stopMirroring(deviceId);
+    }
   }
   
   @override

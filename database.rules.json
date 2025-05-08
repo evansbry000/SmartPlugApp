@@ -5,7 +5,15 @@
     "devices": {
       "$deviceId": {
         // Allow read/write access to device data without authentication
-        // This is necessary for ESP32/ESP8266 devices
+        // This is necessary for Arduino R4 WiFi devices
+        ".read": true,
+        ".write": true
+      }
+    },
+    "smart_plugs": {
+      "$deviceId": {
+        // Allow read/write access to device data without authentication
+        // This is the standardized path used by both app and firmware
         ".read": true,
         ".write": true
       }

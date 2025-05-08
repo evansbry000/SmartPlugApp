@@ -6,12 +6,11 @@ This document lists all the libraries required for the Arduino R4 Smart Plug fir
 
 | Library Name | Version | Purpose |
 |--------------|---------|---------|
-| WiFiS3 | 1.0.0+ | WiFi connectivity for Arduino R4 WiFi |
+| WiFiS3 | 1.0.0+ | WiFi connectivity for Arduino R4 WiFi (includes WiFiSSLClient) |
 | ArduinoJson | 6.21.0+ | JSON parsing and creation for Firebase communication |
 | ArduinoHttpClient | 0.4.0+ | HTTP client for Firebase REST API |
-| SSLClient | 1.6.0+ | SSL/TLS support for secure connections |
+| arduino-timer | 1.3.0+ | Task scheduling for sensor readings and Firebase updates |
 | EEPROM | Built-in | Persistent storage for configuration and data |
-| Timer | 1.3.0+ | Task scheduling for sensor readings and Firebase updates |
 
 ## Installation Instructions
 
@@ -35,21 +34,22 @@ For libraries not available in the Library Manager or if you need a specific ver
    - Linux: `~/Arduino/libraries/`
 4. Restart the Arduino IDE
 
-## SSL Certificate Setup
+## WiFi SSL Connection
 
-The `trust_anchors.h` file is required for secure SSL connections to Firebase. To generate this file:
+The Arduino R4 WiFi includes built-in SSL/TLS support through the `WiFiSSLClient` class in the `WiFiS3` library. This allows secure connections to Firebase without requiring additional SSL libraries.
 
-1. Install the Arduino TrustAnchors tool:
-   ```
-   pip install arduino-trust-anchors
-   ```
+Example usage:
+```cpp
+#include <WiFiS3.h>
 
-2. Generate the trust anchors header file:
-   ```
-   arduino-trust-anchors --host smartplugdatabase-f1fd4-default-rtdb.firebaseio.com --output trust_anchors.h
-   ```
+// Create an SSL client
+WiFiSSLClient client;
 
-3. Place the generated `trust_anchors.h` file in the same directory as your Arduino sketch.
+// Connect securely to host
+if (client.connect(host, 443)) {
+  // SSL connection established
+}
+```
 
 ## Additional Configuration
 
@@ -65,14 +65,6 @@ The Arduino R4 WiFi requires specific board support packages:
 5. Select the "Arduino UNO R4 WiFi" board from **Tools > Board**
 
 ## Troubleshooting Common Issues
-
-### SSL Connection Failures
-
-If you encounter SSL connection failures:
-
-1. Ensure the `trust_anchors.h` file includes the correct root certificates for Firebase
-2. Verify the system time is correctly set (SSL validation relies on accurate time)
-3. Some older versions of the SSL library have memory issues - update to the latest version
 
 ### WiFi Connection Problems
 
@@ -95,4 +87,4 @@ If you encounter JSON parsing errors:
 
 - The `WiFiS3` library is specifically designed for Arduino R4 WiFi and newer boards with the UNO R4 WiFi's connectivity capabilities.
 - The firmware may require small modifications to work with different Arduino boards.
-- The HTTPClient implementation in this project requires at least 32KB of RAM to function properly with SSL connections. 
+- The firmware requires at least 32KB of RAM to function properly with SSL connections. 

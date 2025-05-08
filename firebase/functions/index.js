@@ -11,7 +11,7 @@ const firestore = admin.firestore();
  * This function is triggered whenever the device status changes in RTDB
  */
 exports.mirrorCurrentData = functions.database
-  .ref('/devices/{deviceId}/status')
+  .ref('/smart_plugs/{deviceId}/status')
   .onWrite(async (change, context) => {
     const deviceId = context.params.deviceId;
     console.log(`Status update for device: ${deviceId}`);
@@ -73,7 +73,7 @@ exports.recordHistoricalData = functions.pubsub
 
     try {
       // Get all devices from RTDB
-      const devicesSnapshot = await rtdb.ref('/devices').once('value');
+      const devicesSnapshot = await rtdb.ref('/smart_plugs').once('value');
       const devices = devicesSnapshot.val();
 
       if (!devices) {
@@ -125,22 +125,17 @@ exports.recordHistoricalData = functions.pubsub
  * This function is triggered whenever a new event is added to RTDB
  */
 exports.mirrorEvents = functions.database
-  .ref('/events/{eventId}')
+  .ref('/smart_plugs/{deviceId}/events')
   .onCreate(async (snapshot, context) => {
-    const eventId = context.params.eventId;
-    console.log(`New event: ${eventId}`);
+    const deviceId = context.params.deviceId;
+    const eventId = snapshot.key;
+    console.log(`New event for device: ${deviceId}, event: ${eventId}`);
 
     // Get the event data
     const eventData = snapshot.val();
     if (!eventData) {
       console.log('No event data found');
       return null;
-    }
-
-    // Extract device ID from event ID if it follows the pattern {deviceId}_*
-    let deviceId = 'plug1'; // Default device ID
-    if (eventId.includes('_')) {
-      deviceId = eventId.split('_')[0];
     }
 
     // Add timestamp if not present
@@ -199,31 +194,36 @@ exports.cleanupHistoricalData = functions.pubsub
       console.log('Historical data cleanup completed');
       return null;
     } catch (error) {
-      console.error('Error in historical data cleanup:', error);
+      console.error('Error cleaning up historical data:', error);
       return null;
     }
   });
 
-/**
- * Helper function to delete documents in batches
- */
+// Helper function to delete documents in batches
 async function deleteQueryBatch(db, query) {
-  while (true) {
-    const snapshot = await query.get();
-    
-    // When there are no documents left, we are done
-    if (snapshot.size === 0) {
-      return 0;
-    }
-    
-    // Delete documents in a batch
-    const batch = db.batch();
-    snapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-    await batch.commit();
-    
-    // Count of deleted documents
+  const snapshot = await query.get();
+  
+  // If no documents to delete
+  if (snapshot.size === 0) {
+    return 0;
+  }
+  
+  // Create a batch write
+  const batch = db.batch();
+  snapshot.docs.forEach((doc) => {
+    batch.delete(doc.ref);
+  });
+
+  // Commit the batch
+  await batch.commit();
+  
+  // If there might be more documents to delete
+  if (snapshot.size === 500) {
+    // Wait for a bit to avoid overloading Firestore
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    // Recursively delete the next batch
+    return deleteQueryBatch(db, query);
+  } else {
     return snapshot.size;
   }
 } 

@@ -526,7 +526,7 @@ bool checkCommands(void *) {
   }
   
   // Path for relay commands
-  String path = "/devices/" + String(DEVICE_ID) + "/commands/relay.json";
+  String path = "/smart_plugs/" + String(DEVICE_ID) + "/commands/relay.json";
   String pathWithAuth = path + "?auth=" + String(FIREBASE_API_KEY);
   
   String response = "";
@@ -669,7 +669,7 @@ bool updateStatus(void *) {
   serializeJson(jsonBuffer, jsonStr);
   
   // Path for status data
-  String path = "/devices/" + String(DEVICE_ID) + "/status.json";
+  String path = "/smart_plugs/" + String(DEVICE_ID) + "/status.json";
   path += "?auth=" + String(FIREBASE_API_KEY);
   
   if (firebasePut(path, jsonStr)) {
@@ -905,7 +905,7 @@ void sendEventToFirebase(const char* eventType, const char* message) {
   serializeJson(jsonBuffer, jsonStr);
   
   // Path for events
-  String path = "/events/" + String(DEVICE_ID) + ".json";
+  String path = "/smart_plugs/" + String(DEVICE_ID) + "/events.json";
   path += "?auth=" + String(FIREBASE_API_KEY);
   
   if (firebasePost(path, jsonStr)) {
@@ -984,7 +984,7 @@ void initializeCommandState() {
   Serial.println("Initializing command state in Firebase...");
   
   // Path for relay commands
-  String path = "/devices/" + String(DEVICE_ID) + "/commands/relay.json";
+  String path = "/smart_plugs/" + String(DEVICE_ID) + "/commands/relay.json";
   path += "?auth=" + String(FIREBASE_API_KEY);
   
   // Create JSON payload with relay initialized to OFF

@@ -154,8 +154,8 @@ class DataMirroringService {
     // Cancel existing subscription if any
     await _dataSubscriptions[deviceId]?.cancel();
     
-    // Set up subscription to current data
-    final dataRef = _database.ref('devices/$deviceId/current_data');
+    // Set up subscription to current data - update path
+    final dataRef = _database.ref('smart_plugs/$deviceId/status');
     
     _dataSubscriptions[deviceId] = dataRef.onValue.listen((event) {
       if (!event.snapshot.exists) return;
@@ -190,8 +190,8 @@ class DataMirroringService {
     // Cancel existing subscription if any
     await _eventSubscriptions[deviceId]?.cancel();
     
-    // Set up subscription to events
-    final eventsRef = _database.ref('devices/$deviceId/events');
+    // Set up subscription to events - update path
+    final eventsRef = _database.ref('smart_plugs/$deviceId/events');
     
     _eventSubscriptions[deviceId] = eventsRef.onChildAdded.listen((event) {
       if (!event.snapshot.exists) return;
@@ -203,7 +203,7 @@ class DataMirroringService {
         if (eventData == null || eventId.isEmpty) return;
         
         // Mirror event to Firestore
-        _mirrorEventToFirestore(deviceId, eventId, eventData);
+        _mirrorEventToFirestore(deviceId, eventData);
         
       } catch (e) {
         debugPrint('DataMirroringService: Error processing event: $e');
@@ -213,128 +213,157 @@ class DataMirroringService {
     });
   }
   
-  /// Mirror current device data to Firestore.
+  /// Mirrors current device data from Realtime Database to Firestore.
   ///
-  /// Updates the Firestore document for the device with the latest data.
-  /// Updates two locations: the device collection document and the user's
-  /// device collection document, ensuring consistent access from both paths.
-  ///
-  /// [deviceId] The ID of the device
-  /// [data] The current data to mirror
-  Future<void> _mirrorCurrentDataToFirestore(
-      String deviceId, Map<dynamic, dynamic> data) async {
-    if (_auth.currentUser == null) return;
-    
+  /// This method fetches the current state from RTDB and updates Firestore.
+  /// It preserves fields that only exist in Firestore.
+  Future<void> _mirrorCurrentDataToFirestore(String deviceId, Map<dynamic, dynamic>? data) async {
     try {
-      // Convert dynamic keys to string keys
-      final Map<String, dynamic> typedData = {};
-      data.forEach((key, value) {
-        if (key is String) {
-          typedData[key] = value;
-        }
-      });
-      
-      // Add timestamp if not present
-      if (!typedData.containsKey('timestamp')) {
-        typedData['timestamp'] = FieldValue.serverTimestamp();
+      if (data == null) {
+        // If data is null (which it shouldn't be at this point), just return
+        debugPrint('No current data for device $deviceId');
+        return;
       }
       
-      // Update device document in Firestore
-      await _firestore
-          .collection('devices')
-          .doc(deviceId)
-          .set({
-        'current_data': typedData,
-        'last_updated': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+      // Get the deviceData model
+      final typedData = Map<String, dynamic>.from({
+        'deviceId': deviceId,
+        ...Map<String, dynamic>.from(data),
+      });
       
-      // Update user's device document
+      // Check timestamp type
+      final String timestampType = typedData['timestampType']?.toString() ?? 'realTime';
+      
+      // Record first connection if needed (for device time conversion)
+      if (timestampType == 'deviceTime') {
+        SmartPlugData.recordDeviceFirstConnection(deviceId);
+      }
+      
+      // Create SmartPlugData object
+      final deviceData = SmartPlugData.fromRTDB(typedData);
+      
+      // Reference to device document in Firestore
+      final deviceDoc = _firestore.collection('current_data').doc(deviceId);
+      
+      // Check if document exists to preserve fields that don't exist in RTDB
+      final existingDoc = await deviceDoc.get();
+      Map<String, dynamic> firestoreData = deviceData.toFirestore();
+      
+      if (existingDoc.exists) {
+        final existingData = existingDoc.data() as Map<String, dynamic>?;
+        if (existingData != null) {
+          // Preserve fields that aren't in the RTDB data but exist in Firestore
+          for (final key in existingData.keys) {
+            if (!firestoreData.containsKey(key) && key != 'timestamp') {
+              firestoreData[key] = existingData[key];
+            }
+          }
+        }
+      }
+      
+      // Set the owner ID if not already present
+      if (_auth.currentUser != null && !firestoreData.containsKey('ownerId')) {
+        firestoreData['ownerId'] = _auth.currentUser!.uid;
+      }
+      
+      // Write to Firestore
+      await deviceDoc.set(firestoreData, SetOptions(merge: true));
+      debugPrint('Mirrored current data for device $deviceId to Firestore');
+      
+    } catch (e) {
+      debugPrint('Error mirroring current data for device $deviceId: $e');
+    }
+  }
+  
+  /// Mirrors event data from Realtime Database to Firestore.
+  ///
+  /// This method processes events from RTDB and stores them in Firestore.
+  /// Events are organized by device ID for easy retrieval.
+  Future<void> _mirrorEventToFirestore(String deviceId, Map<dynamic, dynamic> eventData) async {
+    try {
+      if (_auth.currentUser == null) return;
+      
+      // Ensure we have a Map<String, dynamic> to work with
+      final Map<String, dynamic> typedData = Map<String, dynamic>.from({
+        'deviceId': deviceId,
+        ...Map<String, dynamic>.from(eventData),
+      });
+      
+      // Check timestamp type
+      final String timestampType = typedData['timestampType']?.toString() ?? 'realTime';
+      
+      // Record first connection if needed (for device time conversion)
+      if (timestampType == 'deviceTime') {
+        SmartPlugData.recordDeviceFirstConnection(deviceId);
+      }
+      
+      // Generate a unique ID for the event if not present
+      final String eventId = typedData['id']?.toString() ?? 
+                            '${DateTime.now().millisecondsSinceEpoch}_${deviceId}';
+      
+      // Process data into SmartPlugEvent model
+      final event = SmartPlugEvent.fromRTDB(eventId, typedData);
+      
+      // Convert to Firestore format
+      final firestoreData = event.toFirestore();
+      
+      // Add to events collection
+      await _firestore
+          .collection('events')
+          .doc(deviceId)
+          .collection('device_events')
+          .add(firestoreData);
+      
+      // Add event to user's events collection if authenticated
       if (_auth.currentUser != null) {
         await _firestore
             .collection('users')
             .doc(_auth.currentUser!.uid)
-            .collection('devices')
+            .collection('events')
             .doc(deviceId)
-            .set({
-          'current_data': typedData,
-          'last_updated': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
+            .collection('device_events')
+            .add(firestoreData);
+        
+        // Update unacknowledged event count
+        if (!event.acknowledged) {
+          await _updateUnacknowledgedCount(deviceId);
+        }
       }
       
+      debugPrint('Mirrored event for device $deviceId to Firestore');
     } catch (e) {
-      debugPrint('DataMirroringService: Error mirroring data to Firestore: $e');
+      debugPrint('Error mirroring event for device $deviceId: $e');
     }
   }
   
-  /// Mirror a device event to Firestore.
+  /// Records historical data in Firestore.
   ///
-  /// Creates an event document in Firestore based on Realtime Database event data.
-  /// This enables efficient querying of event history through Firestore queries.
-  ///
-  /// [deviceId] The ID of the device
-  /// [eventId] The unique ID of the event
-  /// [eventData] The event data to mirror
-  Future<void> _mirrorEventToFirestore(
-      String deviceId, String eventId, Map<dynamic, dynamic> eventData) async {
+  /// This method stores time-series data in Firestore for historical analysis.
+  /// It properly handles both real-time and device-time timestamp types.
+  Future<void> _recordHistoricalData(String deviceId, Map<dynamic, dynamic> data) async {
     try {
-      // Convert dynamic keys to string keys
-      final Map<String, dynamic> typedData = {};
-      eventData.forEach((key, value) {
-        if (key is String) {
-          typedData[key] = value;
-        }
+      // Get the deviceData model
+      final typedData = Map<String, dynamic>.from({
+        'deviceId': deviceId,
+        ...Map<String, dynamic>.from(data),
       });
       
-      // Add timestamp if not present
-      if (!typedData.containsKey('timestamp')) {
-        typedData['timestamp'] = FieldValue.serverTimestamp();
+      // Check timestamp type
+      final String timestampType = typedData['timestampType']?.toString() ?? 'realTime';
+      
+      // Record first connection if needed (for device time conversion)
+      if (timestampType == 'deviceTime') {
+        SmartPlugData.recordDeviceFirstConnection(deviceId);
       }
       
-      // Store in device events collection
-      await _firestore
-          .collection('devices')
-          .doc(deviceId)
-          .collection('events')
-          .doc(eventId)
-          .set(typedData);
+      // Create SmartPlugData object
+      final deviceData = SmartPlugData.fromRTDB(typedData);
       
-    } catch (e) {
-      debugPrint('DataMirroringService: Error mirroring event to Firestore: $e');
-    }
-  }
-  
-  /// Record historical data in Firestore.
-  ///
-  /// Creates a time-series record of device data for historical analysis.
-  /// The historical data uses a timestamp-based document ID to ensure 
-  /// chronological ordering when querying.
-  ///
-  /// [deviceId] The ID of the device
-  /// [data] The current data to record
-  Future<void> _recordHistoricalData(
-      String deviceId, Map<dynamic, dynamic> data) async {
-    try {
-      // Convert dynamic keys to string keys
-      final Map<String, dynamic> typedData = {};
-      data.forEach((key, value) {
-        if (key is String) {
-          typedData[key] = value;
-        }
-      });
-      
-      // Get timestamp or use current time
-      final DateTime timestamp;
-      if (typedData.containsKey('timestamp') && typedData['timestamp'] is int) {
-        timestamp = DateTime.fromMillisecondsSinceEpoch(typedData['timestamp'] as int);
-      } else {
-        timestamp = DateTime.now();
-      }
+      // Convert to Firestore format
+      final firestoreData = deviceData.toFirestore();
       
       // Create document ID with timestamp for chronological order
-      final docId = '${timestamp.millisecondsSinceEpoch}_${DateTime.now().microsecond}';
-      
-      // Add timestamp in a consistent format
-      typedData['timestamp'] = timestamp;
+      final docId = '${deviceData.timestamp.millisecondsSinceEpoch}_${DateTime.now().microsecond}';
       
       // Store in historical data collection
       await _firestore
@@ -342,10 +371,54 @@ class DataMirroringService {
           .doc(deviceId)
           .collection('historical_data')
           .doc(docId)
-          .set(typedData);
+          .set(firestoreData);
       
+      debugPrint('Recorded historical data for device $deviceId');
     } catch (e) {
-      debugPrint('DataMirroringService: Error recording historical data: $e');
+      debugPrint('Error recording historical data for device $deviceId: $e');
+    }
+  }
+  
+  /// Updates the unacknowledged event count for a device.
+  ///
+  /// This method is called when a new unacknowledged event is added to Firestore.
+  /// It updates a counter in the device document for quick access to unread events.
+  Future<void> _updateUnacknowledgedCount(String deviceId) async {
+    try {
+      // Get current count
+      final deviceDoc = _firestore.collection('devices').doc(deviceId);
+      final snapshot = await deviceDoc.get();
+      
+      int currentCount = 0;
+      if (snapshot.exists) {
+        final data = snapshot.data();
+        if (data != null && data.containsKey('unacknowledged_events')) {
+          currentCount = (data['unacknowledged_events'] as num).toInt();
+        }
+      }
+      
+      // Increment count
+      await deviceDoc.set({
+        'unacknowledged_events': currentCount + 1,
+        'last_event_at': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      
+      // Also update user's device document
+      if (_auth.currentUser != null) {
+        await _firestore
+            .collection('users')
+            .doc(_auth.currentUser!.uid)
+            .collection('devices')
+            .doc(deviceId)
+            .set({
+          'unacknowledged_events': currentCount + 1,
+          'last_event_at': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+      
+      debugPrint('Updated unacknowledged event count for device $deviceId');
+    } catch (e) {
+      debugPrint('Error updating unacknowledged event count: $e');
     }
   }
   
